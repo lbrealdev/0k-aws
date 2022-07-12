@@ -1,0 +1,215 @@
+﻿AWS CLI > https://docs.aws.amazon.com/cli/latest/index.html
+ 
+Mostra versão awscli
+aws --version
+
+Lista configuração atual Access Key - Secret Key - Region
+aws configure list
+
+S3
+List buckets
+aws s3 ls
+
+
+Bucket location
+aws s3api get-bucket-location --bucket <bucket-name>
+
+
+Logging status
+aws s3api get-bucket-logging --bucket <bucket-name>
+
+
+________________
+
+
+Autoscaling
+Describe autoscale group details and member instances
+aws autoscaling describe-auto-scaling-groups \
+ --auto-scaling-group-names <as-group-name>
+
+
+________________
+
+
+CloudFormation
+Template validation
+aws cloudformation validate-template \
+ --template-body file://myCFN.template.json
+
+
+aws cloudformation validate-template \
+ --template-url https://s3.amazonaws.com/cfn/myCFN.template.json
+
+
+Listing stacks
+aws cloudformation list-stacks \
+ --stack-status-filter [ CREATE_COMPLETE | UPDATE_COMPLETE | etc.. ]
+
+
+Viewing stack events and resources
+aws cloudformation describe-stack-events --stack-name <stack-name>
+
+
+aws cloudformation list-stack-resources --stack-name <stack-name>
+
+
+________________
+
+
+CloudTrail
+Creating a subscription
+aws cloudtrail create-subscription \
+ --name cloudtrail-logs-ue1 \
+ --s3-use-bucket cloudtrail-logs \
+ --s3-prefix stage \
+ --sns-new-topic cloudtrail-stage-notify-ue1
+
+
+Describing and retrieving status
+aws cloudtrail describe-trails
+
+
+aws cloudtrail get-trail-status --name cloudtrail-logs-ue1
+
+
+________________
+
+
+EC2
+Describing
+aws ec2 describe-instances --instance-ids <instance-id>
+
+
+Starting, stopping, rebooting and killing an instance
+aws ec2 start-instances --instance-ids <instance-id>
+
+
+aws ec2 stop-instances --instance-ids <instance-id>
+
+
+aws ec2 reboot-instances --instance-ids <instance-id>
+
+
+aws ec2 terminate-instances --instance-ids <instance-id>
+
+
+Viewing console output
+aws ec2 get-console-output --instance-id <instance-id>
+
+
+Listing images
+aws ec2 describe-images --image-ids <ami-id>
+
+
+Creating an AMI
+aws ec2 create-image \
+ --instance-id <instance-id> \
+ --name myAMI \
+ --description 'Test AMI'
+
+
+Viewing a security group
+aws ec2 describe-security-groups --group-names <group-name>
+
+
+Checking the enhanced networking attribute
+aws ec2 describe-instance-attribute \
+ --instance-id <instance-id> \
+ --attribute sriovNetSupport
+
+
+________________
+
+
+VPC
+Describing
+aws ec2 describe-vpcs
+
+
+aws ec2 describe-subnets --filters Name=vpc-id,Values=<vpc-id>
+
+
+aws ec2 describe-route-tables --filters Name=vpc-id,Values=<vpc-id>
+
+
+aws ec2 describe-network-acls --filters Name=vpc-id,Values=<vpc-id>
+
+
+aws ec2 describe-vpc-peering-connections
+
+
+________________
+
+
+ELB
+Describing
+aws elb describe-load-balancers --load-balancer-names <lb-name>
+
+
+aws elb describe-load-balancer-attributes --load-balancer-name <lb-name>
+
+
+aws elb describe-load-balancer-policies \
+ --policy-names [ <policy-name> | ELBSecurityPolicy-2014-10 ]
+
+
+Registering and removing instances
+aws elb register-instances-with-load-balancer
+ --load-balancer-name <lb-name>
+ --instances <instance-id>
+
+
+aws elb deregister-instances-from-load-balancer
+ --load-balancer-name <lb-name>
+ --instances <instance-id>
+
+
+Viewing the health of your ELB instances
+aws elb describe-instance-health --load-balancer-name <lb-name>
+
+
+________________
+
+
+IAM
+Uploading a server certificate
+aws iam upload-server-certificate
+ --server-certificate-name my.cert.com
+ --certificate-body file://my.cert.com.crt
+ --private-key file://my.cert.com.key
+ --certificate-chain file://Verisign_Chain_CA.crt
+
+
+Listing your certificates
+aws iam list-server-certificates
+
+
+________________
+
+
+Using the "--query" option
+(JMESPath query language for JSON)
+Describe all instances in a region, or in a specific VPC
+
+
+aws ec2 describe-instances \
+ --query 'Reservations[*].Instances[*].{Id:InstanceId,Pub:PublicIpAddress,Pri:PrivateIpAddress,State:State.Name}' \
+ --output table
+
+
+aws ec2 describe-instances \
+ --filters Name=vpc-id,Values=<vpc-id> \
+ --query 'Reservations[*].Instances[*].{Id:InstanceId,Pub:PublicIpAddress,Pri:PrivateIpAddress,State:State.Name}' \
+ --output table
+
+
+Output:
+--------------------------------------------------------------
+|                      DescribeInstances                     |
++------------+-----------------+------------------+----------+
+|     Id     |       Pri       |       Pub        |  State   |
++------------+-----------------+------------------+----------+
+|  i-e44ac30e|  10.79.129.62   |  54.172.232.200  |  running |
+|  i-68dd7282|  10.79.133.95   |  54.172.204.142  |  running |
+|  i-60e5f38d|  10.79.130.54   |  54.172.145.250  |  running |
+...
