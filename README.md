@@ -20,7 +20,7 @@ aws ec2 describe-instances \
 
 ### Security Groups
 
-List security groups by filtering by security group name with query for IpPermissions (`Inbound Rules) of just UserIdGroupPairs (security group IDs) counting their length and json output format:
+List security groups by filtering by security group name with query for IpPermissions `(Inbound Rules)` of just UserIdGroupPairs `(security group IDs)` counting their length and json output format:
 ````shell
 aws ec2 describe-security-groups \
   --filters "Name=group-name,Values=<security-group-name>" \
@@ -28,7 +28,7 @@ aws ec2 describe-security-groups \
   --output json
 ````
 
-List security groups by filtering by name with query for IpPermissions (Inbound Rules) of just IpRanges (IPs/CIDRs) counting their length and json output format:
+List security groups by filtering by name with query for IpPermissions `(Inbound Rules)` of just IpRanges `(IPs/CIDRs)` counting their length and json output format:
 ````shell
 aws ec2 describe-security-groups \
   --filters "Name=group-name,Values=<security-group-name>" \
@@ -71,14 +71,14 @@ aws secretsmanager get-secret-value --secret-id "<secret-name>" --query "SecretS
 
 ### VPC
 
-List all subnets showing as in table format:
+List all subnets in table format:
 ```shell
 aws ec2 describe-subnets \
  --query "sort_by(Subnets[].{Name:Tags[?Key == 'Name'].Value | [0],Vpc:VpcId,Id:SubnetId,AvailableIps:AvailableIpAddressCount} &Name)" \
  --output table
 ```
 
-Describe the vpcs as in table format:
+List all VPCs in table format:
 ```shell
 aws ec2 describe-vpcs \
   --query "Vpcs[].{Name:Tags[?Key == 'Name'].Value | [0],VpcId:VpcId,CIDR:CidrBlock,Account:OwnerId}" \
