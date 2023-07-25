@@ -2,11 +2,11 @@
 
 <!-- TOC -->
 
-- [EC2](https://github.com/lbrealdev/aws-cli-guide#ec2)
-- [Security Groups](https://github.com/lbrealdev/aws-cli-guide#security-groups)
-- [EC2 AMI](https://github.com/lbrealdev/aws-cli-guide#ec2-ami)
-- [Secrets Manager](https://github.com/lbrealdev/aws-cli-guide#secrets-manager)
-- [VPC](https://github.com/lbrealdev/aws-cli-guide#vpc)
+- [EC2](https://github.com/lbrealdev/0k-aws#ec2)
+- [Security Groups](https://github.com/lbrealdev/0k-aws#security-groups)
+- [EC2 AMI](https://github.com/lbrealdev/0k-aws#ec2-ami)
+- [Secrets Manager](https://github.com/lbrealdev/0k-aws#secrets-manager)
+- [VPC](https://github.com/lbrealdev/0k-aws#vpc)
 
 ### EC2
 
