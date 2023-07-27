@@ -5,7 +5,7 @@
 - [EC2](https://github.com/lbrealdev/0k-aws#ec2)
 - [Security Groups](https://github.com/lbrealdev/0k-aws#security-groups)
 - [EC2 AMI](https://github.com/lbrealdev/0k-aws#ec2-ami)
-- [ECS Snapshots](https://github.com/lbrealdev/0k-aws#ec2-snapshots)
+- [EC2 Snapshots](https://github.com/lbrealdev/0k-aws#ec2-snapshots)
 - [Secrets Manager](https://github.com/lbrealdev/0k-aws#secrets-manager)
 - [VPC](https://github.com/lbrealdev/0k-aws#vpc)
 
@@ -71,7 +71,7 @@ aws ec2 describe-images \
   --output table
 ```
 
-### ECS Snapshots
+### EC2 Snapshots
 
 List all snapshots filtering by owner id and snapshot status passing query by snapshot id and tag key:
 ```shell
