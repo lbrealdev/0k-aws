@@ -40,8 +40,8 @@ aws ec2 describe-images \
 List all AMIs by filtering by name, passing query in table format output with some AMI properties.
 ```shell
 aws ec2 describe-images \
-  --filters "Name=name,Values=*-anc-iss-*" \
-  --query 'sort_by(Images[*].{AMI:Name,ID:ImageId,Owner:OwnerId,Date:CreationDate,Snapshot:BlockDeviceMappings[0].Ebs.SnapshotId}, &Date)' \
+  --filters "Name=name,Values=<ami-name-*>" \
+  --query "sort_by(Images[*].{AMI:Name,ID:ImageId,Owner:OwnerId,Date:CreationDate,Snapshot:BlockDeviceMappings[0].Ebs.SnapshotId}, &Date)" \
   --output table
 ```
 
@@ -50,8 +50,8 @@ aws ec2 describe-images \
 List all snapshots filtering by owner id and snapshot status passing query by snapshot id and tag key:
 ```shell
 aws ec2 describe-snapshots \
-  --filters Name=status,Values=completed \
-  --filters Name=owner-id,Values=<owner-id> \
+  --filters "Name=status,Values=completed" \
+  --filters "Name=owner-id,Values=<owner-id>" \
   --query "Snapshots[*].{ID:SnapshotId,Name:Tags[?Key == 'Name'].Value | [0]}" \
   --output table
 ```
