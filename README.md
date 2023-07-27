@@ -3,9 +3,9 @@
 <!-- TOC -->
 
 - [EC2](https://github.com/lbrealdev/0k-aws#ec2)
-- [Security Groups](https://github.com/lbrealdev/0k-aws#security-groups)
 - [EC2 AMI](https://github.com/lbrealdev/0k-aws#ec2-ami)
 - [EC2 Snapshots](https://github.com/lbrealdev/0k-aws#ec2-snapshots)
+- [Security Groups](https://github.com/lbrealdev/0k-aws#security-groups)
 - [Secrets Manager](https://github.com/lbrealdev/0k-aws#secrets-manager)
 - [VPC](https://github.com/lbrealdev/0k-aws#vpc)
 
@@ -17,32 +17,6 @@ aws ec2 describe-instances \
   --filters "Name=tag:Name,Values=<instance-name>" \
   --query "reverse(sort_by(Reservations[*].Instances[].{ID:InstanceId,Type:InstanceType,Status:State.Name,Init:LaunchTime,EC2Name:Tags[?Key == 'Name'].Value | [0]} &Init))" \
   --output table
-```
-
-### Security Groups
-
-List security groups by filtering by security group name with query for IpPermissions `(Inbound Rules)` of just UserIdGroupPairs `(security group IDs)` counting their length and json output format:
-````shell
-aws ec2 describe-security-groups \
-  --filters "Name=group-name,Values=<security-group-name>" \
-  --query "SecurityGroups[*].{Name:GroupName,Ingress:IpPermissions[].UserIdGroupPairs.length(@)}" \
-  --output json
-````
-
-List security groups by filtering by name with query for IpPermissions `(Inbound Rules)` of just IpRanges `(IPs/CIDRs)` counting their length and json output format:
-````shell
-aws ec2 describe-security-groups \
-  --filters "Name=group-name,Values=<security-group-name>" \
-  --query "SecurityGroups[*].{Name:GroupName,Ingress: IpPermissions[].IpRanges.length(@)}" \
-  --output json
-````
-
-List a specific security group:
-```shell
-aws ec2 describe-security-groups \
-  --group-ids <security-group-id> \
-  --query "SecurityGroups[*].{Name: GroupName, IngressRules: IpPermissions[].IpRanges, EgressRules: IpPermissionsEgress[]}" \
-  --output json
 ```
 
 ### EC2 AMI
@@ -80,6 +54,32 @@ aws ec2 describe-snapshots \
   --filters Name=owner-id,Values=<owner-id> \
   --query "Snapshots[*].{ID:SnapshotId,Name:Tags[?Key == 'Name'].Value | [0]}" \
   --output table
+```
+
+### Security Groups
+
+List security groups by filtering by security group name with query for IpPermissions `(Inbound Rules)` of just UserIdGroupPairs `(security group IDs)` counting their length and json output format:
+````shell
+aws ec2 describe-security-groups \
+  --filters "Name=group-name,Values=<security-group-name>" \
+  --query "SecurityGroups[*].{Name:GroupName,Ingress:IpPermissions[].UserIdGroupPairs.length(@)}" \
+  --output json
+````
+
+List security groups by filtering by name with query for IpPermissions `(Inbound Rules)` of just IpRanges `(IPs/CIDRs)` counting their length and json output format:
+````shell
+aws ec2 describe-security-groups \
+  --filters "Name=group-name,Values=<security-group-name>" \
+  --query "SecurityGroups[*].{Name:GroupName,Ingress: IpPermissions[].IpRanges.length(@)}" \
+  --output json
+````
+
+List a specific security group:
+```shell
+aws ec2 describe-security-groups \
+  --group-ids <security-group-id> \
+  --query "SecurityGroups[*].{Name: GroupName, IngressRules: IpPermissions[].IpRanges, EgressRules: IpPermissionsEgress[]}" \
+  --output json
 ```
 
 ### Secrets Manager
