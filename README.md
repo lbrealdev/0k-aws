@@ -5,6 +5,7 @@
 - [EC2](https://github.com/lbrealdev/0k-aws#ec2)
 - [Security Groups](https://github.com/lbrealdev/0k-aws#security-groups)
 - [EC2 AMI](https://github.com/lbrealdev/0k-aws#ec2-ami)
+- [ECS Snapshots](https://github.com/lbrealdev/0k-aws#ec2-snapshots)
 - [Secrets Manager](https://github.com/lbrealdev/0k-aws#secrets-manager)
 - [VPC](https://github.com/lbrealdev/0k-aws#vpc)
 
@@ -46,7 +47,7 @@ aws ec2 describe-security-groups \
 
 ### EC2 AMI
 
-List all AMIs filtering by name by sorting the query by creation date of all images:  
+List all AMIs filtering by name by sorting the query by creation date of all images:
 ```shell
 aws ec2 describe-images \
   --filters "Name=name,Values=<ami-name-*>" \
@@ -59,6 +60,25 @@ Get the latest AMI ID:
 aws ec2 describe-images \
   --filters "Name=name,Values=<ami-name-*>" \
   --query 'sort_by(Images[*], &CreationDate)[-1].[ImageId]' \
+  --output table
+```
+
+List all AMIs by filtering by name, passing query in table format output with some AMI properties.
+```shell
+aws ec2 describe-images \
+  --filters "Name=name,Values=*-anc-iss-*" \
+  --query 'sort_by(Images[*].{AMI:Name,ID:ImageId,Owner:OwnerId,Date:CreationDate,Snapshot:BlockDeviceMappings[0].Ebs.SnapshotId}, &Date)' \
+  --output table
+```
+
+### ECS Snapshots
+
+List all snapshots filtering by owner id and snapshot status passing query by snapshot id and tag key:
+```shell
+aws ec2 describe-snapshots \
+  --filters Name=status,Values=completed \
+  --filters Name=owner-id,Values=<owner-id> \
+  --query "Snapshots[*].{ID:SnapshotId,Name:Tags[?Key == 'Name'].Value | [0]}" \
   --output table
 ```
 
