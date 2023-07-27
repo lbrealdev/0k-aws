@@ -3,8 +3,9 @@
 <!-- TOC -->
 
 - [EC2](https://github.com/lbrealdev/0k-aws#ec2)
-- [Security Groups](https://github.com/lbrealdev/0k-aws#security-groups)
 - [EC2 AMI](https://github.com/lbrealdev/0k-aws#ec2-ami)
+- [EC2 Snapshots](https://github.com/lbrealdev/0k-aws#ec2-snapshots)
+- [Security Groups](https://github.com/lbrealdev/0k-aws#security-groups)
 - [Secrets Manager](https://github.com/lbrealdev/0k-aws#secrets-manager)
 - [VPC](https://github.com/lbrealdev/0k-aws#vpc)
 
@@ -15,6 +16,43 @@ List EC2 instances by filtering by tag:name value with queries to display some r
 aws ec2 describe-instances \
   --filters "Name=tag:Name,Values=<instance-name>" \
   --query "reverse(sort_by(Reservations[*].Instances[].{ID:InstanceId,Type:InstanceType,Status:State.Name,Init:LaunchTime,EC2Name:Tags[?Key == 'Name'].Value | [0]} &Init))" \
+  --output table
+```
+
+### EC2 AMI
+
+List all AMIs filtering by name by sorting the query by creation date of all images:
+```shell
+aws ec2 describe-images \
+  --filters "Name=name,Values=<ami-name-*>" \
+  --query 'reverse(sort_by(Images[*], &CreationDate)[].Name)' \
+  --output table
+```
+
+Get the latest AMI ID:
+```shell
+aws ec2 describe-images \
+  --filters "Name=name,Values=<ami-name-*>" \
+  --query 'sort_by(Images[*], &CreationDate)[-1].[ImageId]' \
+  --output table
+```
+
+List all AMIs by filtering by name, passing query in table format output with some AMI properties.
+```shell
+aws ec2 describe-images \
+  --filters "Name=name,Values=*-anc-iss-*" \
+  --query 'sort_by(Images[*].{AMI:Name,ID:ImageId,Owner:OwnerId,Date:CreationDate,Snapshot:BlockDeviceMappings[0].Ebs.SnapshotId}, &Date)' \
+  --output table
+```
+
+### EC2 Snapshots
+
+List all snapshots filtering by owner id and snapshot status passing query by snapshot id and tag key:
+```shell
+aws ec2 describe-snapshots \
+  --filters Name=status,Values=completed \
+  --filters Name=owner-id,Values=<owner-id> \
+  --query "Snapshots[*].{ID:SnapshotId,Name:Tags[?Key == 'Name'].Value | [0]}" \
   --output table
 ```
 
@@ -42,24 +80,6 @@ aws ec2 describe-security-groups \
   --group-ids <security-group-id> \
   --query "SecurityGroups[*].{Name: GroupName, IngressRules: IpPermissions[].IpRanges, EgressRules: IpPermissionsEgress[]}" \
   --output json
-```
-
-### EC2 AMI
-
-List all AMIs filtering by name by sorting the query by creation date of all images:  
-```shell
-aws ec2 describe-images \
-  --filters "Name=name,Values=<ami-name-*>" \
-  --query 'reverse(sort_by(Images[*], &CreationDate)[].Name)' \
-  --output table
-```
-
-Get the latest AMI ID:
-```shell
-aws ec2 describe-images \
-  --filters "Name=name,Values=<ami-name-*>" \
-  --query 'sort_by(Images[*], &CreationDate)[-1].[ImageId]' \
-  --output table
 ```
 
 ### Secrets Manager
