@@ -2,12 +2,20 @@
 
 <!-- TOC -->
 
+- [CodeArtifact](https://github.com/lbrealdev/0k-aws#codeartifact)
 - [EC2](https://github.com/lbrealdev/0k-aws#ec2)
 - [EC2 AMI](https://github.com/lbrealdev/0k-aws#ec2-ami)
 - [EC2 Snapshots](https://github.com/lbrealdev/0k-aws#ec2-snapshots)
 - [Security Groups](https://github.com/lbrealdev/0k-aws#security-groups)
 - [Secrets Manager](https://github.com/lbrealdev/0k-aws#secrets-manager)
 - [VPC](https://github.com/lbrealdev/0k-aws#vpc)
+
+### CodeArtifact
+
+Get a temporary authorization token to access CodeArtifact repositories by passing a query by `authorizationToken` with a text output:
+```shell
+aws codeartifact get-authorization-token --domain <domain>  --domain-owner <owner-account> --duration-seconds 20000 --query "authorizationToken" --output text
+```
 
 ### EC2
 
