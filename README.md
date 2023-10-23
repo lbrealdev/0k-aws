@@ -23,6 +23,7 @@ List EC2 instances by filtering by tag:name value with queries to display some r
 ```shell
 aws ec2 describe-instances \
   --filters "Name=tag:Name,Values=<instance-name>" \
+  --filters "Name=instance-state-name,Values=<instance-state>" \
   --query "reverse(sort_by(Reservations[*].Instances[].{ID:InstanceId,Type:InstanceType,Status:State.Name,Init:LaunchTime,EC2Name:Tags[?Key == 'Name'].Value | [0]} &Init))" \
   --output table
 ```
