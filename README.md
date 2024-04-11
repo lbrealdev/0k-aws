@@ -9,6 +9,7 @@
 - [Security Groups](https://github.com/lbrealdev/0k-aws#security-groups)
 - [Secrets Manager](https://github.com/lbrealdev/0k-aws#secrets-manager)
 - [VPC](https://github.com/lbrealdev/0k-aws#vpc)
+- [EKS](https://github.com/lbrealdev/0k-aws#eks)
 
 ### CodeArtifact
 
@@ -113,3 +114,16 @@ aws ec2 describe-vpcs \
   --query "Vpcs[].{Name:Tags[?Key == 'Name'].Value | [0],VpcId:VpcId,CIDR:CidrBlock,Account:OwnerId}" \
   --output table
 ```
+
+### EKS
+
+List all EKS clusters in yaml format:
+```shell
+aws eks list-clusters --output yaml
+```
+
+List the access entries for EKS cluster:
+```shell
+aws eks list-access-entries --cluster-name "eks-cluster-name"
+```
+
