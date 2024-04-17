@@ -10,7 +10,7 @@
 - [Secrets Manager](https://github.com/lbrealdev/0k-aws#secrets-manager)
 - [VPC](https://github.com/lbrealdev/0k-aws#vpc)
 - [EKS](https://github.com/lbrealdev/0k-aws#eks)
-- [IAM]()
+- [IAM](https://github.com/lbrealdev/0k-aws#iam)
 
 ### CodeArtifact
 
