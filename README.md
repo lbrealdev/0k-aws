@@ -10,6 +10,7 @@
 - [Secrets Manager](https://github.com/lbrealdev/0k-aws#secrets-manager)
 - [VPC](https://github.com/lbrealdev/0k-aws#vpc)
 - [EKS](https://github.com/lbrealdev/0k-aws#eks)
+- [IAM]()
 
 ### CodeArtifact
 
@@ -127,8 +128,14 @@ List the access entries for EKS cluster:
 aws eks list-access-entries --cluster-name "<eks-cluster-name>" --output yaml
 ```
 
-Configures kubectl to connect to the EKS cluster:
+Configures kubeconfig to connect to the EKS cluster:
 ```shell
 aws eks update-kubeconfig --name "<eks-cluster-name>" --region "<aws-region>" 
 ```
 
+### IAM
+
+Get IAM role:
+```shell
+aws iam get-role --role-name <iam-role-name>
+```
