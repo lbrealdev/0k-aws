@@ -9,6 +9,8 @@
 - [Security Groups](https://github.com/lbrealdev/0k-aws#security-groups)
 - [Secrets Manager](https://github.com/lbrealdev/0k-aws#secrets-manager)
 - [VPC](https://github.com/lbrealdev/0k-aws#vpc)
+- [EKS](https://github.com/lbrealdev/0k-aws#eks)
+- [IAM](https://github.com/lbrealdev/0k-aws#iam)
 
 ### CodeArtifact
 
@@ -112,4 +114,28 @@ List all VPCs in table format:
 aws ec2 describe-vpcs \
   --query "Vpcs[].{Name:Tags[?Key == 'Name'].Value | [0],VpcId:VpcId,CIDR:CidrBlock,Account:OwnerId}" \
   --output table
+```
+
+### EKS
+
+List all EKS clusters in yaml format:
+```shell
+aws eks list-clusters --output yaml
+```
+
+List the access entries for EKS cluster:
+```shell
+aws eks list-access-entries --cluster-name "<eks-cluster-name>" --output yaml
+```
+
+Configures kubeconfig to connect to the EKS cluster:
+```shell
+aws eks update-kubeconfig --name "<eks-cluster-name>" --region "<aws-region>" 
+```
+
+### IAM
+
+Get IAM role:
+```shell
+aws iam get-role --role-name <iam-role-name>
 ```

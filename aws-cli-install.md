@@ -7,7 +7,7 @@ curl -SLfs "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscli
 
 Unzip the installer:
 ```shell
-unzip awscliv2.zip
+unzip -q awscliv2.zip
 ```
 
 Run the install program:
