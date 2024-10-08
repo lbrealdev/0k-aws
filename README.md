@@ -139,3 +139,10 @@ Get IAM role:
 ```shell
 aws iam get-role --role-name <iam-role-name>
 ```
+
+### OpenSearch
+
+List domain names:
+```shell
+aws opensearch list-domain-names --engine-type OpenSearch
+```
