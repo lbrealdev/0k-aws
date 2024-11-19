@@ -19,6 +19,21 @@ Get a temporary authorization token to access CodeArtifact repositories by passi
 aws codeartifact get-authorization-token --domain <domain>  --domain-owner <owner-account> --duration-seconds 20000 --query "authorizationToken" --output text
 ```
 
+Describe codeartifact domain:
+```shell
+aws codeartifact describe-domain --domain <domain>
+```
+
+Describe codeartifact repository:
+```shell
+aws codeartifact describe-repository --domain <domain> --repository <repository-name>
+```
+
+Get codeartifact repository endpoint:
+```shell
+aws codeartifact get-repository-endpoint --domain <domain> --repository <repository-name> --format <format>
+```
+
 ### EC2
 
 List EC2 instances by filtering by tag:name value with queries to display some reverse sort data fields for runtime with table output format:

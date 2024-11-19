@@ -2,7 +2,7 @@
 
 Download the awscli package from amazon using curl:
 ```shell
-curl -SLfs "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+curl -fsSLo "awscliv2.zip" "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
 ```
 
 Unzip the installer:
@@ -10,12 +10,12 @@ Unzip the installer:
 unzip -q awscliv2.zip
 ```
 
-Run the install program:
+Run the installation binary:
 ```shell
 sudo ./aws/install
 ```
 
-Get aws cli version:
+Print aws cli version:
 ```shell
 aws --version
 ```
