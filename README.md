@@ -19,6 +19,40 @@ Get a temporary authorization token to access CodeArtifact repositories by passi
 aws codeartifact get-authorization-token --domain <domain>  --domain-owner <owner-account> --duration-seconds 20000 --query "authorizationToken" --output text
 ```
 
+Describe codeartifact domain:
+```shell
+aws codeartifact describe-domain --domain <domain>
+```
+
+Describe codeartifact repository:
+```shell
+aws codeartifact describe-repository --domain <domain> --repository <repository-name>
+```
+
+Get codeartifact repository endpoint:
+```shell
+aws codeartifact get-repository-endpoint --domain <domain> --repository <repository-name> --format <format>
+```
+
+Add repository upstream in codeartifact repository:
+```shell
+aws codeartifact update-repository \
+  --domain <domain> \
+  --domain-owner <owner-account> \
+  --repository <repository-name> \
+  --upstreams repositoryName=<upstream-repository-name>
+```
+
+List packages in the repository:
+```shell
+aws codeartifact list-packages --domain <domain> --repository <repository-name>
+```
+
+
+#### Sources
+
+- [Upstream repository priority order](https://docs.aws.amazon.com/codeartifact/latest/ug/repo-upstream-search-order.html)
+
 ### EC2
 
 List EC2 instances by filtering by tag:name value with queries to display some reverse sort data fields for runtime with table output format:
@@ -138,4 +172,11 @@ aws eks update-kubeconfig --name "<eks-cluster-name>" --region "<aws-region>"
 Get IAM role:
 ```shell
 aws iam get-role --role-name <iam-role-name>
+```
+
+### OpenSearch
+
+List domain names:
+```shell
+aws opensearch list-domain-names --engine-type OpenSearch
 ```
