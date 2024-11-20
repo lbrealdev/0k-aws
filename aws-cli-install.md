@@ -20,6 +20,6 @@ Print aws cli version:
 aws --version
 ```
 
-### Sources
+#### Sources
 
 - [AWS CLI guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)

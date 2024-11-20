@@ -34,6 +34,25 @@ Get codeartifact repository endpoint:
 aws codeartifact get-repository-endpoint --domain <domain> --repository <repository-name> --format <format>
 ```
 
+Add repository upstream in codeartifact repository:
+```shell
+aws codeartifact update-repository \
+  --domain <domain> \
+  --domain-owner <owner-account> \
+  --repository <repository-name> \
+  --upstreams repositoryName=<upstream-repository-name>
+```
+
+List packages in the repository:
+```shell
+aws codeartifact list-packages --domain <domain> --repository <repository-name>
+```
+
+
+#### Sources
+
+- [Upstream repository priority order](https://docs.aws.amazon.com/codeartifact/latest/ug/repo-upstream-search-order.html)
+
 ### EC2
 
 List EC2 instances by filtering by tag:name value with queries to display some reverse sort data fields for runtime with table output format:
