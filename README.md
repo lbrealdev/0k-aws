@@ -3,6 +3,7 @@
 <!-- TOC -->
 
 - [CodeArtifact](https://github.com/lbrealdev/0k-aws#codeartifact)
+- [CodeDeploy](https://github.com/lbrealdev/0k-aws#codedeploy)
 - [EC2](https://github.com/lbrealdev/0k-aws#ec2)
 - [EC2 AMI](https://github.com/lbrealdev/0k-aws#ec2-ami)
 - [EC2 Snapshots](https://github.com/lbrealdev/0k-aws#ec2-snapshots)
@@ -19,22 +20,22 @@ Get a temporary authorization token to access CodeArtifact repositories by passi
 aws codeartifact get-authorization-token --domain <domain>  --domain-owner <owner-account> --duration-seconds 20000 --query "authorizationToken" --output text
 ```
 
-Describe codeartifact domain:
+Describe CodeArtifact domain:
 ```shell
 aws codeartifact describe-domain --domain <domain>
 ```
 
-Describe codeartifact repository:
+Describe CodeArtifact repository:
 ```shell
 aws codeartifact describe-repository --domain <domain> --repository <repository-name>
 ```
 
-Get codeartifact repository endpoint:
+Get CodeArtifact repository endpoint:
 ```shell
 aws codeartifact get-repository-endpoint --domain <domain> --repository <repository-name> --format <format>
 ```
 
-Add repository upstream in codeartifact repository:
+Add repository upstream in CodeArtifact repository:
 ```shell
 aws codeartifact update-repository \
   --domain <domain> \
@@ -48,10 +49,30 @@ List packages in the repository:
 aws codeartifact list-packages --domain <domain> --repository <repository-name>
 ```
 
-
 #### Sources
 
 - [Upstream repository priority order](https://docs.aws.amazon.com/codeartifact/latest/ug/repo-upstream-search-order.html)
+
+### CodeDeploy
+
+Get CodeDeploy application:
+```shell
+aws deploy get-application --application-name <application-name>
+```
+
+List CodeDeploy application deployments:
+```shell
+aws deploy list-deployments \
+  --application-name <application-name> \
+  --create-time-range start=2024-12-01T00:00:00,end=2024-12-17T00:00:00 \
+  --deployment-group-name <deployment-group-name> \
+  --include-only-statuses Succeeded
+```
+
+Get CodeDeploy deployment:
+```shell
+aws deploy get-deployment --deployment-id <deployment-id>
+```
 
 ### EC2
 
