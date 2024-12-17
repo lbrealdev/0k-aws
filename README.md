@@ -53,6 +53,27 @@ aws codeartifact list-packages --domain <domain> --repository <repository-name>
 
 - [Upstream repository priority order](https://docs.aws.amazon.com/codeartifact/latest/ug/repo-upstream-search-order.html)
 
+### CodeDeploy
+
+Get CodeDeploy application:
+```shell
+aws deploy get-application --application-name <application-name>
+```
+
+List CodeDeploy application deployments:
+```shell
+aws deploy list-deployments \
+  --application-name <application-name> \
+  --create-time-range start=2024-12-01T00:00:00,end=2024-12-17T00:00:00 \
+  --deployment-group-name <deployment-group-name> \
+  --include-only-statuses Succeeded
+```
+
+Get CodeDeploy deployment:
+```shell
+aws deploy get-deployment --deployment-id <deployment-id>
+```
+
 ### EC2
 
 List EC2 instances by filtering by tag:name value with queries to display some reverse sort data fields for runtime with table output format:
