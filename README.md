@@ -3,6 +3,7 @@
 <!-- TOC -->
 
 - [CodeArtifact](https://github.com/lbrealdev/0k-aws#codeartifact)
+- [CodeDeploy](https://github.com/lbrealdev/0k-aws#codedeploy)
 - [EC2](https://github.com/lbrealdev/0k-aws#ec2)
 - [EC2 AMI](https://github.com/lbrealdev/0k-aws#ec2-ami)
 - [EC2 Snapshots](https://github.com/lbrealdev/0k-aws#ec2-snapshots)
@@ -19,22 +20,22 @@ Get a temporary authorization token to access CodeArtifact repositories by passi
 aws codeartifact get-authorization-token --domain <domain>  --domain-owner <owner-account> --duration-seconds 20000 --query "authorizationToken" --output text
 ```
 
-Describe codeartifact domain:
+Describe CodeArtifact domain:
 ```shell
 aws codeartifact describe-domain --domain <domain>
 ```
 
-Describe codeartifact repository:
+Describe CodeArtifact repository:
 ```shell
 aws codeartifact describe-repository --domain <domain> --repository <repository-name>
 ```
 
-Get codeartifact repository endpoint:
+Get CodeArtifact repository endpoint:
 ```shell
 aws codeartifact get-repository-endpoint --domain <domain> --repository <repository-name> --format <format>
 ```
 
-Add repository upstream in codeartifact repository:
+Add repository upstream in CodeArtifact repository:
 ```shell
 aws codeartifact update-repository \
   --domain <domain> \
@@ -47,7 +48,6 @@ List packages in the repository:
 ```shell
 aws codeartifact list-packages --domain <domain> --repository <repository-name>
 ```
-
 
 #### Sources
 
