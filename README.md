@@ -111,6 +111,16 @@ aws ec2 describe-images \
   --output table
 ```
 
+Delete a specific AMI:
+```shell
+aws ec2 deregister-image --image-id <ami-id>
+```
+
+Delete AMI snapshot:
+```shell
+aws ec2 delete-snapshot --snapshot-id <snapshot-id>
+```
+
 ### EC2 Snapshots
 
 List all snapshots filtering by owner id and snapshot status passing query by snapshot id and tag key:
