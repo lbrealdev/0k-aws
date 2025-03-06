@@ -111,6 +111,11 @@ aws ec2 describe-images \
   --output table
 ```
 
+Delete AMI:
+```shell
+aws ec2 deregister-image --image-id <ami-id>
+```
+
 ### EC2 Snapshots
 
 List all snapshots filtering by owner id and snapshot status passing query by snapshot id and tag key:
@@ -120,6 +125,11 @@ aws ec2 describe-snapshots \
   --filters "Name=owner-id,Values=<owner-id>" \
   --query "Snapshots[*].{ID:SnapshotId,Name:Tags[?Key == 'Name'].Value | [0]}" \
   --output table
+```
+
+Delete snapshot:
+```shell
+aws ec2 delete-snapshot --snapshot-id <snapshot-id>
 ```
 
 ### Security Groups
