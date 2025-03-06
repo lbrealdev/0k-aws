@@ -111,14 +111,9 @@ aws ec2 describe-images \
   --output table
 ```
 
-Delete a specific AMI:
+Delete AMI:
 ```shell
 aws ec2 deregister-image --image-id <ami-id>
-```
-
-Delete AMI snapshot:
-```shell
-aws ec2 delete-snapshot --snapshot-id <snapshot-id>
 ```
 
 ### EC2 Snapshots
@@ -130,6 +125,11 @@ aws ec2 describe-snapshots \
   --filters "Name=owner-id,Values=<owner-id>" \
   --query "Snapshots[*].{ID:SnapshotId,Name:Tags[?Key == 'Name'].Value | [0]}" \
   --output table
+```
+
+Delete snapshot:
+```shell
+aws ec2 delete-snapshot --snapshot-id <snapshot-id>
 ```
 
 ### Security Groups
