@@ -227,5 +227,5 @@ aws s3 cp <file-name> s3://<bucket-name>/<file-name>
 
 Copy in recursive mode:
 ```shell
-aws s3 cp . s3://anc-co2-artifacts --recursive
+aws s3 cp . s3://<bucket-name> --recursive
 ```
