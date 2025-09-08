@@ -12,6 +12,7 @@
 - [VPC](https://github.com/lbrealdev/0k-aws#vpc)
 - [EKS](https://github.com/lbrealdev/0k-aws#eks)
 - [IAM](https://github.com/lbrealdev/0k-aws#iam)
+- [S3](https://github.com/lbrealdev/0k-aws#S3)
 
 ### CodeArtifact
 
@@ -200,4 +201,31 @@ aws iam get-role --role-name <iam-role-name>
 List domain names:
 ```shell
 aws opensearch list-domain-names --engine-type OpenSearch
+```
+
+### S3
+
+List s3 buckets:
+```shell
+aws s3 ls
+```
+
+List content in a specific s3 bucket:
+```shell
+aws s3 ls s3://<bucket-name>
+```
+
+Copy file from s3 bucket to local:
+```shell
+aws s3 cp s3://<bucket-name>/<file-name> <file-name>
+```
+
+Copy file from local to s3 bucket:
+```shell
+aws s3 cp <file-name> s3://<bucket-name>/<file-name>
+```
+
+Copy in recursive mode:
+```shell
+aws s3 cp . s3://anc-co2-artifacts --recursive
 ```
