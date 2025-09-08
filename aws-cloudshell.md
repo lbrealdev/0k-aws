@@ -17,5 +17,5 @@ mv mise ~/.local/bin
 
 Install `just`:
 ```shell
-curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | sudo bash -s -- --to /.local/bin
+curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | sudo bash -s -- --to ~/.local/bin
 ```
