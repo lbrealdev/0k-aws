@@ -13,6 +13,7 @@
 - [EKS](https://github.com/lbrealdev/0k-aws#eks)
 - [IAM](https://github.com/lbrealdev/0k-aws#iam)
 - [S3](https://github.com/lbrealdev/0k-aws#S3)
+- [STS](https://github.com/lbrealdev/0k-aws#STS)
 
 ### CodeArtifact
 
@@ -228,4 +229,10 @@ aws s3 cp <file-name> s3://<bucket-name>/<file-name>
 Copy in recursive mode:
 ```shell
 aws s3 cp . s3://<bucket-name> --recursive
+```
+
+### STS
+
+```shell
+aws sts get-caller-identity
 ```
