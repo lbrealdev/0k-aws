@@ -2,6 +2,7 @@
 
 <!-- TOC -->
 
+- [Configure](#configure)
 - [CodeArtifact](#codeartifact)
 - [CodeDeploy](#codedeploy)
 - [EC2](#ec2)
@@ -14,6 +15,13 @@
 - [IAM](#iam)
 - [S3](#S3)
 - [STS](#STS)
+
+### Configure
+
+List the profile, access key, secret key, and region for the specified user:
+```shell
+aws configure list
+```
 
 ### CodeArtifact
 
