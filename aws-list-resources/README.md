@@ -2,7 +2,9 @@
 
 ## Tools
 
+- https://github.com/turbot/steampipe
 - https://github.com/JohannesEbke/aws_list_all
+- https://github.com/welldone-cloud/aws-list-resources
 - https://github.com/MacHu-GWU/aws_resource_search-project
 - https://github.com/cloudquery/cloudquery
 - https://github.com/scopely-devops/skew
@@ -10,11 +12,6 @@
 - https://github.com/nccgroup/aws-inventory
 - https://github.com/jckuester/awsls
 - https://github.com/trek10inc/awsets
-
-## AWS Config
-
-- [What Is AWS Config?](https://docs.aws.amazon.com/config/latest/developerguide/WhatIsConfig.html)
-- [Query Using the SQL Query Editor for AWS Config (AWS CLI)](https://docs.aws.amazon.com/config/latest/developerguide/query-using-sql-editor-cli.html)
 
 ## Related links
 
