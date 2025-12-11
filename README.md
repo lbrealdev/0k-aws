@@ -2,17 +2,18 @@
 
 <!-- TOC -->
 
-- [CodeArtifact](https://github.com/lbrealdev/0k-aws#codeartifact)
-- [CodeDeploy](https://github.com/lbrealdev/0k-aws#codedeploy)
-- [EC2](https://github.com/lbrealdev/0k-aws#ec2)
-- [EC2 AMI](https://github.com/lbrealdev/0k-aws#ec2-ami)
-- [EC2 Snapshots](https://github.com/lbrealdev/0k-aws#ec2-snapshots)
-- [Security Groups](https://github.com/lbrealdev/0k-aws#security-groups)
-- [Secrets Manager](https://github.com/lbrealdev/0k-aws#secrets-manager)
-- [VPC](https://github.com/lbrealdev/0k-aws#vpc)
-- [EKS](https://github.com/lbrealdev/0k-aws#eks)
-- [IAM](https://github.com/lbrealdev/0k-aws#iam)
-- [S3](https://github.com/lbrealdev/0k-aws#S3)
+- [CodeArtifact](#codeartifact)
+- [CodeDeploy](#codedeploy)
+- [EC2](#ec2)
+- [EC2 AMI](#ec2-ami)
+- [EC2 Snapshots](s#ec2-snapshots)
+- [Security Groups](#security-groups)
+- [Secrets Manager](#secrets-manager)
+- [VPC](#vpc)
+- [EKS](#eks)
+- [IAM](#iam)
+- [S3](#S3)
+- [STS](#STS)
 
 ### CodeArtifact
 
@@ -228,4 +229,11 @@ aws s3 cp <file-name> s3://<bucket-name>/<file-name>
 Copy in recursive mode:
 ```shell
 aws s3 cp . s3://<bucket-name> --recursive
+```
+
+### STS
+
+Get details about the IAM user or role:
+```shell
+aws sts get-caller-identity
 ```
