@@ -1,4 +1,12 @@
-# Install AWS CLI
+# AWS CLI
+
+Universal Command Line Interface for Amazon Web Services.
+
+### Source
+
+- https://github.com/aws/aws-cli
+
+## Install AWS CLI
 
 Download the awscli package from amazon using curl:
 ```shell
@@ -20,6 +28,6 @@ Print aws cli version:
 aws --version
 ```
 
-#### Sources
+## Related links
 
-- [AWS CLI guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+- [Installing or updating to the latest version of the AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
