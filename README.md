@@ -15,12 +15,20 @@
 - [IAM](#iam)
 - [S3](#S3)
 - [STS](#STS)
+- [SSO](#SSO)
+- [Login](#login)
+- [Logout](#logout)
 
 ### Configure
 
 List the profile, access key, secret key, and region for the specified user:
 ```shell
 aws configure list
+```
+
+Import CSV credentials generated from the AWS web console:
+```shell
+aws configure import --csv file://<iam-user>_accessKeys.csv
 ```
 
 ### CodeArtifact
@@ -244,4 +252,22 @@ aws s3 cp . s3://<bucket-name> --recursive
 Get details about the IAM user or role:
 ```shell
 aws sts get-caller-identity
+```
+
+### SSO
+
+```shell
+aws sso-admin list-instances
+```
+
+### Login
+
+```shell
+aws login
+```
+
+### Logout
+
+```shell
+aws logout
 ```
