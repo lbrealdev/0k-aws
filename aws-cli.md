@@ -26,7 +26,8 @@ aws --version
 
 ## References
 
-- [AWS CLI Repository](https://github.com/aws/aws-cli)
+- [AWS CLI v1/v2 Repository (GitHub)](https://github.com/aws/aws-cli)
+- [AWS CLI v1 Repository (PyPI)](https://pypi.org/project/awscli/)
 - [AWS CLI Command Reference](https://docs.aws.amazon.com/cli/latest/)
 - [What is the AWS Command Line Interface?](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-welcome.html)
 - [Installing or updating to the latest version of the AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
