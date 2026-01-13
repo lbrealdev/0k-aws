@@ -1,14 +1,12 @@
 # AWS CodeCommit
 
-
-
 ## Working with AWS CodeCommit
 
 ### Prerequisites
 
-- `Git` - Make sure you have Git installed
-- `AWS CLI v2` - AWS CodeCommit commands only work with AWS CLI version 2, so make sure you have AWS CLI v2 installed.
-- `AWS IAM Role` - Ensure you have an IAM role with sufficient permissions.
+- Git - Git with your `.gitconfig` properly configured
+- AWS CLI v2 - AWS CodeCommit has a native helper that only works with AWS CLI version 2
+- AWS IAM Role - IAM role that contains `AWSCodeCommitReadOnly` or `AWSCodeCommitPowerUser`
 
 ### Git Config
 
@@ -16,8 +14,7 @@
 
 ```
 
-
-### AWS CodeCommit Tools
+### AWS CodeCommit Helper - Git Remote CodeCommit
 
 - https://github.com/aws/git-remote-codecommit
 - https://pypi.org/project/git-remote-codecommit/
