@@ -5,23 +5,23 @@ set -euo pipefail
 # Array to track generated reports
 generated=()
 
-AWS_ACCOUNT=$(aws sts get-caller-identity | jq -r '.Account')
 TIMESTAMP=$(date '+%Y%m%d%H%M%S')
 REPORT_DIR="aws_dev_report_${TIMESTAMP}"
-REPORT_SUFFIX="${AWS_ACCOUNT}_${TIMESTAMP}.csv"
 
-mkdir -p "$REPORT_DIR"
+echo "###########################################"
+echo "#   AWS Developer Tools Report Generator  #"
+echo "###########################################"
+echo ""
 
-# Check AWS credentials
-if ! aws sts get-caller-identity > /dev/null 2>&1; then
+# Check AWS credentials and retrieve account
+if ACCOUNT=$(aws sts get-caller-identity | jq -r '.Account' 2>/dev/null); then
+  AWS_ACCOUNT="$ACCOUNT"
+  REPORT_SUFFIX="${AWS_ACCOUNT}_${TIMESTAMP}.csv"
+  mkdir -p "$REPORT_DIR"
+else
   echo "Error: Invalid or missing AWS credentials/access keys."
   exit 1
 fi
-
-echo "############################################"
-echo "#   AWS Developer Tools Report Generator   #"
-echo "############################################"
-echo ""
 
 # AWS CodeCommit
 # alias: aws-cc
@@ -138,8 +138,8 @@ if [ ${#generated[@]} -gt 0 ]; then
     echo "  - $REPORT_DIR/$report"
   done
 else
-  echo "No reports generated."
+  echo "No reports were generated."
 fi
 
 echo ""
-echo "Report generation completed."
+echo "Process completed."
