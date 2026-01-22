@@ -2,12 +2,6 @@
 
 set -euo pipefail
 
-# Colors for output
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-BLUE='\033[0;34m'
-NC='\033[0m'  # No Color
-
 # Array to track generated reports
 generated=()
 
@@ -17,12 +11,12 @@ REPORT_SUFFIX="${AWS_ACCOUNT}_${TIMESTAMP}.csv"
 
 # Check AWS credentials
 if ! aws sts get-caller-identity > /dev/null 2>&1; then
-  echo -e "${RED}Error: Invalid or missing AWS credentials/access keys.${NC}"
+  echo "Error: Invalid or missing AWS credentials/access keys."
   exit 1
 fi
 
-echo -e "${BLUE}AWS Developer Tools Report Generator${NC}"
-echo -e "${BLUE}====================================${NC}"
+echo "AWS Developer Tools Report Generator"
+echo "===================================="
 
 # AWS CodeCommit
 # alias: aws-cc
@@ -30,12 +24,14 @@ echo -e "${BLUE}====================================${NC}"
 cc_repos=$(aws codecommit list-repositories | jq -r 'if (.repositories | length > 0) then "not empty" else "empty" end')
 
 if [ "$cc_repos" == "not empty" ]; then
-  echo -e "${GREEN}Generating report for AWS CodeCommit repositories...${NC}"
+  echo "Generating report for AWS CodeCommit repositories..."
   aws codecommit list-repositories | jq -r '["NAME", "ID"], (.repositories[] | [.repositoryName, .repositoryId]) | @csv' > aws-cc-"$REPORT_SUFFIX"
   generated+=("aws-cc-$REPORT_SUFFIX")
 else
-  echo -e "${RED}No repositories found in AWS CodeCommit.${NC}"
+  echo "No repositories found in AWS CodeCommit."
 fi
+
+echo ""
 
 # AWS CodeArtifact
 # alias: aws-ca
@@ -43,12 +39,14 @@ fi
 ca_repos=$(aws codeartifact list-repositories | jq -r 'if (.repositories | length > 0) then "not empty" else "empty" end')
 
 if [ "$ca_repos" == "not empty" ]; then
-  echo -e "${GREEN}Generating report for AWS CodeArtifact repositories...${NC}"
+  echo "Generating report for AWS CodeArtifact repositories..."
   aws codeartifact list-repositories | jq -r '["NAME", "DOMAIN", "DESCRIPTION"], (.repositories[] | [.name, .domainName, .description]) | @csv' > aws-ca-"$REPORT_SUFFIX"
   generated+=("aws-ca-$REPORT_SUFFIX")
 else
-  echo -e "${RED}No repositories found in AWS CodeArtifact.${NC}"
+  echo "No repositories found in AWS CodeArtifact."
 fi
+
+echo ""
 
 # AWS CodeBuild
 # alias: aws-cb
@@ -56,12 +54,14 @@ fi
 cb_projects=$(aws codebuild list-projects | jq -r 'if (.projects | length > 0) then "not empty" else "empty" end')
 
 if [ "$cb_projects" == "not empty" ]; then
-  echo -e "${GREEN}Generating report for AWS CodeBuild projects...${NC}"
+  echo "Generating report for AWS CodeBuild projects..."
   aws codebuild list-projects | jq -r '["NAME"], (.projects[] | [.]) | @csv' > aws-cb-"$REPORT_SUFFIX"
   generated+=("aws-cb-$REPORT_SUFFIX")
 else
-  echo -e "${RED}No projects found in AWS CodeBuild.${NC}"
+  echo "No projects found in AWS CodeBuild."
 fi
+
+echo ""
 
 # AWS CodeDeploy
 # alias: aws-cd
@@ -69,12 +69,14 @@ fi
 cd_deployments=$(aws deploy list-applications | jq -r 'if (.applications | length > 0) then "not empty" else "empty" end')
 
 if [ "$cd_deployments" == "not empty" ]; then
-  echo -e "${GREEN}Generating report for AWS CodeDeploy applications...${NC}"
+  echo "Generating report for AWS CodeDeploy applications..."
   aws deploy list-applications | jq -r '["NAME"], (.applications[] | [.]) | @csv' > aws-cd-"$REPORT_SUFFIX"
   generated+=("aws-cd-$REPORT_SUFFIX")
 else
-  echo -e "${RED}No applications found in AWS CodeDeploy.${NC}"
+  echo "No applications found in AWS CodeDeploy."
 fi
+
+echo ""
 
 # AWS CodePipeline
 # alias: aws-cp
@@ -82,20 +84,21 @@ fi
 cp_pipelines=$(aws codepipeline list-pipelines | jq -r 'if (.pipelines | length > 0) then "not empty" else "empty" end')
 
 if [ "$cp_pipelines" == "not empty" ]; then
-  echo -e "${GREEN}Generating report for AWS CodePipeline pipelines...${NC}"
+  echo "Generating report for AWS CodePipeline pipelines..."
   aws codepipeline list-pipelines | jq -r '["NAME", "VERSION", "TYPE", "CREATED"], (.pipelines[] | [.name, .version, .pipelineType, .created]) | @csv' > aws-cp-"$REPORT_SUFFIX"
   generated+=("aws-cp-$REPORT_SUFFIX")
 else
-  echo -e "${RED}No pipelines found in AWS CodePipeline.${NC}"
+  echo "No pipelines found in AWS CodePipeline."
 fi
 
-echo -e "${BLUE}====================================${NC}"
+echo ""
+echo "===================================="
 if [ ${#generated[@]} -gt 0 ]; then
-  echo -e "${GREEN}Generated reports:${NC}"
+  echo "Generated reports:"
   for report in "${generated[@]}"; do
-    echo -e "  - $report"
+    echo "  - $report"
   done
 else
-  echo -e "${RED}No reports generated.${NC}"
+  echo "No reports generated."
 fi
-echo -e "${BLUE}Report generation completed.${NC}"
+echo "Report generation completed."
