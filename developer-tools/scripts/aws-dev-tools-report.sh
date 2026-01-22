@@ -26,12 +26,20 @@ echo ""
 # AWS CodeCommit
 # alias: aws-cc
 
-cc_repos=$(aws codecommit list-repositories | jq -r 'if (.repositories | length > 0) then "not empty" else "empty" end')
+if aws codecommit list-repositories > /dev/null 2>&1; then
+  has_codecommit_repos=$(aws codecommit list-repositories | jq -r 'if (.repositories | length > 0) then "not empty" else "empty" end')
+else
+  echo "Warning: Insufficient permissions to access CodeCommit. Skipping report."
+  has_codecommit_repos="access_denied"
+fi
 
-if [ "$cc_repos" == "not empty" ]; then
+if [ "$has_codecommit_repos" == "not empty" ]; then
   echo "Generating report for AWS CodeCommit repositories..."
   aws codecommit list-repositories | jq -r '["NAME", "ID"], (.repositories[] | [.repositoryName, .repositoryId]) | @csv' > "$REPORT_DIR/aws-cc-$REPORT_SUFFIX"
   generated+=("aws-cc-$REPORT_SUFFIX")
+elif [ "$has_codecommit_repos" == "access_denied" ]; then
+  # Report skipped due to permissions
+  :
 else
   echo "No repositories found in AWS CodeCommit."
 fi
@@ -39,12 +47,20 @@ fi
 # AWS CodeArtifact
 # alias: aws-ca
 
-ca_repos=$(aws codeartifact list-repositories | jq -r 'if (.repositories | length > 0) then "not empty" else "empty" end')
+if aws codeartifact list-repositories > /dev/null 2>&1; then
+  has_codeartifact_repos=$(aws codeartifact list-repositories | jq -r 'if (.repositories | length > 0) then "not empty" else "empty" end')
+else
+  echo "Warning: Insufficient permissions to access CodeArtifact. Skipping report."
+  has_codeartifact_repos="access_denied"
+fi
 
-if [ "$ca_repos" == "not empty" ]; then
+if [ "$has_codeartifact_repos" == "not empty" ]; then
   echo "Generating report for AWS CodeArtifact repositories..."
   aws codeartifact list-repositories | jq -r '["NAME", "DOMAIN", "DESCRIPTION"], (.repositories[] | [.name, .domainName, .description]) | @csv' > "$REPORT_DIR/aws-ca-$REPORT_SUFFIX"
   generated+=("aws-ca-$REPORT_SUFFIX")
+elif [ "$has_codeartifact_repos" == "access_denied" ]; then
+  # Report skipped due to permissions
+  :
 else
   echo "No repositories found in AWS CodeArtifact."
 fi
@@ -52,12 +68,20 @@ fi
 # AWS CodeBuild
 # alias: aws-cb
 
-cb_projects=$(aws codebuild list-projects | jq -r 'if (.projects | length > 0) then "not empty" else "empty" end')
+if aws codebuild list-projects > /dev/null 2>&1; then
+  has_codebuild_projects=$(aws codebuild list-projects | jq -r 'if (.projects | length > 0) then "not empty" else "empty" end')
+else
+  echo "Warning: Insufficient permissions to access CodeBuild. Skipping report."
+  has_codebuild_projects="access_denied"
+fi
 
-if [ "$cb_projects" == "not empty" ]; then
+if [ "$has_codebuild_projects" == "not empty" ]; then
   echo "Generating report for AWS CodeBuild projects..."
   aws codebuild list-projects | jq -r '["NAME"], (.projects[] | [.]) | @csv' > "$REPORT_DIR/aws-cb-$REPORT_SUFFIX"
   generated+=("aws-cb-$REPORT_SUFFIX")
+elif [ "$has_codebuild_projects" == "access_denied" ]; then
+  # Report skipped due to permissions
+  :
 else
   echo "No projects found in AWS CodeBuild."
 fi
@@ -65,12 +89,20 @@ fi
 # AWS CodeDeploy
 # alias: aws-cd
 
-cd_deployments=$(aws deploy list-applications | jq -r 'if (.applications | length > 0) then "not empty" else "empty" end')
+if aws deploy list-applications > /dev/null 2>&1; then
+  has_codedeploy_applications=$(aws deploy list-applications | jq -r 'if (.applications | length > 0) then "not empty" else "empty" end')
+else
+  echo "Warning: Insufficient permissions to access CodeDeploy. Skipping report."
+  has_codedeploy_applications="access_denied"
+fi
 
-if [ "$cd_deployments" == "not empty" ]; then
+if [ "$has_codedeploy_applications" == "not empty" ]; then
   echo "Generating report for AWS CodeDeploy applications..."
   aws deploy list-applications | jq -r '["NAME"], (.applications[] | [.]) | @csv' > "$REPORT_DIR/aws-cd-$REPORT_SUFFIX"
   generated+=("aws-cd-$REPORT_SUFFIX")
+elif [ "$has_codedeploy_applications" == "access_denied" ]; then
+  # Report skipped due to permissions
+  :
 else
   echo "No applications found in AWS CodeDeploy."
 fi
@@ -78,12 +110,20 @@ fi
 # AWS CodePipeline
 # alias: aws-cp
 
-cp_pipelines=$(aws codepipeline list-pipelines | jq -r 'if (.pipelines | length > 0) then "not empty" else "empty" end')
+if aws codepipeline list-pipelines > /dev/null 2>&1; then
+  has_codepipeline_pipelines=$(aws codepipeline list-pipelines | jq -r 'if (.pipelines | length > 0) then "not empty" else "empty" end')
+else
+  echo "Warning: Insufficient permissions to access CodePipeline. Skipping report."
+  has_codepipeline_pipelines="access_denied"
+fi
 
-if [ "$cp_pipelines" == "not empty" ]; then
+if [ "$has_codepipeline_pipelines" == "not empty" ]; then
   echo "Generating report for AWS CodePipeline pipelines..."
   aws codepipeline list-pipelines | jq -r '["NAME", "VERSION", "TYPE", "CREATED"], (.pipelines[] | [.name, .version, .pipelineType, .created]) | @csv' > "$REPORT_DIR/aws-cp-$REPORT_SUFFIX"
   generated+=("aws-cp-$REPORT_SUFFIX")
+elif [ "$has_codepipeline_pipelines" == "access_denied" ]; then
+  # Report skipped due to permissions
+  :
 else
   echo "No pipelines found in AWS CodePipeline."
 fi
