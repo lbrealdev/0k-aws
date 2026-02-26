@@ -167,7 +167,6 @@ validate_profile() {
 
     local account_id
     if ! account_id=$(aws sts get-caller-identity --query 'Account' --output text 2>/dev/null); then
-        log_error "Failed to authenticate with profile: $profile"
         return 1
     fi
 
@@ -218,42 +217,43 @@ main() {
     log_info "Validating profiles..."
     echo ""
 
-    local validated_count=0
-    local last_profile=""
+    local success_count=0
+    local failure_count=0
 
     local tmpfile
     tmpfile=$(mktemp)
     echo "$all_profiles" > "$tmpfile"
-
-    local result_file
-    result_file=$(mktemp)
 
     while IFS= read -r profile || [ -n "$profile" ]; do
         [ -z "$profile" ] && continue
 
         local result
         if result=$(validate_profile "$profile"); then
-            echo "$result" >> "$result_file"
-            validated_count=$((validated_count + 1))
-            last_profile="$profile"
+            success_count=$((success_count + 1))
+            local account_id alias
+            account_id=$(echo "$result" | cut -d'|' -f1)
+            alias=$(echo "$result" | cut -d'|' -f2)
+            printf "${GREEN}[OK]${RESET}    %s | %s | %s - authenticated successfully\n" "$account_id" "$alias" "$profile"
         else
-            log_error "Validation failed. Exiting."
-            rm -f "$tmpfile" "$result_file"
-            exit 1
+            failure_count=$((failure_count + 1))
+            export AWS_PROFILE="$profile"
+            local account_id
+            account_id=$(aws configure get sso_account_id 2>/dev/null) || account_id="<unknown>"
+            printf "${RED}[FAIL]${RESET} %s | %s | %s - failed to authenticate\n" "$account_id" "$profile" "$profile"
         fi
     done < "$tmpfile"
 
     rm -f "$tmpfile"
 
-    echo "Account ID        | Alias            | Profile"
-    echo "------------------+------------------+------------------"
-    column -t -s '|' "$result_file" | sed 's/^/  /'
-
-    rm -f "$result_file"
-
     echo ""
-    log_ok "Validated $validated_count profile(s)"
-    log_info "Active profile: $last_profile"
+    echo "---"
+    echo "Validated: $profile_count profile(s)"
+    echo -e "Succeeded: ${GREEN}$success_count${RESET}"
+    echo -e "Failed:    ${RED}$failure_count${RESET}"
+
+    if [ "$failure_count" -gt 0 ]; then
+        exit 1
+    fi
 }
 
 main "$@"
