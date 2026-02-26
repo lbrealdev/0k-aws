@@ -1,7 +1,5 @@
 # IAM Identity Center
 
-
-
 - [AWS IAM Identity Center FAQs](https://aws.amazon.com/iam/identity-center/faqs/)
 - [Organization instances of IAM Identity Center](https://docs.aws.amazon.com/singlesignon/latest/userguide/organization-instances-identity-center.html)
 - [Account instances of IAM Identity Center](https://docs.aws.amazon.com/singlesignon/latest/userguide/account-instances-identity-center.html)

@@ -1,6 +1,16 @@
 # Steampipe
 
-### Usage
+## Installation
+
+```shell
+mise use -g steampipe
+```
+
+```shell
+steampipe --version
+```
+
+## Usage
 
 ```shell
 steampipe plugin list
@@ -18,7 +28,7 @@ steampipe plugin uninstall aws
 steampipe plugin update aws
 ```
 
-### Queries Examples
+## Queries Examples
 
 ```shell
 steampipe query "select name, arn, account_id, creation_date from aws_s3_bucket" --output table

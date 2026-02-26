@@ -1,19 +1,6 @@
-# AWS SSO
+# AWS Authentication
 
-Create `credentials` file into the `~/.aws` directory:
-```shell
-touch ~/.aws
-```
+Methods for authenticating with AWS:
 
-
-
-## AWS login
-
-```shell
-
-```
-
-
-
-## Related links
-
+- [IAM User](./iam-user.md) - Long-term credentials
+- [IAM Identity Center / SSO](./aws-sso.md) - Recommended for organizations

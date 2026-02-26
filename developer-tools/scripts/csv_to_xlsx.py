@@ -23,7 +23,7 @@ def main():
         print(f"Error: Directory '{csv_dir}' not found.")
         sys.exit(1)
 
-    xlsx_file = f"{csv_dir}.xlsx"
+    xlsx_file = os.path.join(csv_dir, "final_report.xlsx")
 
     sheet_names = {
         "aws-cc": "CodeCommit",
