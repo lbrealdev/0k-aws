@@ -233,13 +233,13 @@ main() {
             local account_id alias
             account_id=$(echo "$result" | cut -d'|' -f1)
             alias=$(echo "$result" | cut -d'|' -f2)
-            printf "${GREEN}[OK]${RESET}    %s | %s | %s - authenticated successfully\n" "$account_id" "$alias" "$profile"
+            printf "${GREEN}[OK]${RESET} %-12s | %-25s | %s - authenticated successfully\n" "$account_id" "$alias" "$profile"
         else
             failure_count=$((failure_count + 1))
             export AWS_PROFILE="$profile"
             local account_id
             account_id=$(aws configure get sso_account_id 2>/dev/null) || account_id="<unknown>"
-            printf "${RED}[FAIL]${RESET} %s | %s | %s - failed to authenticate\n" "$account_id" "$profile" "$profile"
+            printf "${RED}[FAIL]${RESET} %-12s | %-25s | %s - failed to authenticate\n" "$account_id" "$profile" "$profile"
         fi
     done < "$tmpfile"
 
