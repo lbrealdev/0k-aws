@@ -2,13 +2,9 @@
 
 Universal Command Line Interface for Amazon Web Services.
 
-### Source
+## Install AWS CLI v2
 
-- https://github.com/aws/aws-cli
-
-## Install AWS CLI
-
-Download the `awscli` package from amazon using curl:
+Download the `awscliv2` package from amazon using curl:
 ```shell
 curl -fsSLo "awscliv2.zip" "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
 ```
@@ -28,7 +24,11 @@ After the installation process is complete, run the following command to get the
 aws --version
 ```
 
-## Related links
+## References
 
+- [AWS CLI v1/v2 Repository (GitHub)](https://github.com/aws/aws-cli)
+- [AWS CLI v1 Repository (PyPI)](https://pypi.org/project/awscli/)
 - [AWS CLI Command Reference](https://docs.aws.amazon.com/cli/latest/)
+- [What is the AWS Command Line Interface?](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-welcome.html)
 - [Installing or updating to the latest version of the AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+- [Authenticating with short-term credentials for the AWS CLI](https://docs.aws.amazon.com/cli/v1/userguide/cli-authentication-short-term.html)
