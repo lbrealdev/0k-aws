@@ -1,2 +1,6 @@
 # IDEs and editors
 .idea/
+
+# AWS developer tools reports
+aws_dev_report_*/
+*.xlsx
