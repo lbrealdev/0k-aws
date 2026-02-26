@@ -7,7 +7,7 @@ AWS_CONFIG_FILE="$HOME/.aws/config"
 AWS_ENV_VARS=("AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN")
 
 echo "#========================================#"
-echo "#     AWS SSO PROFILES CHECK SCRIPT     #"
+echo "#     AWS SSO PROFILES CHECK SCRIPT      #"
 echo "#========================================#"
 echo ""
 
