@@ -275,7 +275,7 @@ main() {
         info "[$processed/${#snapshots[@]}] Processing: $SNAPSHOT_ID"
         
         if [[ "$DRY_RUN" = true ]]; then
-            info "  [DRY RUN] Would execute: aws rds modify-db-snapshot --db-snapshot-identifier \"$SNAPSHOT_ID\" --option-group-name \"$TARGET_OPTION\""
+            info "[DRY RUN] Would execute: aws rds modify-db-snapshot --db-snapshot-identifier \"$SNAPSHOT_ID\" --option-group-name \"$TARGET_OPTION\""
         else
             info "  Modifying snapshot to use option group: $TARGET_OPTION"
             if aws rds modify-db-snapshot \
