@@ -1,23 +1,8 @@
 # Security Hub
 
-Get all findings:
-```shell
-aws securityhub get-findings \
-  --output table
-```
-
-Get findings with specific severity:
-```shell
-aws securityhub get-findings \
-  --filters '{"SeverityLabel": [{"Comparison": "EQUALS", "Value": "CRITICAL"}]}' \
-  --output table
-```
-
 Get findings by compliance status:
 ```shell
-aws securityhub get-findings \
-  --filters '{"ComplianceStatus": [{"Comparison": "EQUALS", "Value": "FAILED"}]}' \
-  --output table
+aws securityhub get-findings --filters '{"ComplianceStatus": [{"Comparison": "EQUALS", "Value": "FAILED"}]}' --no-paginate
 ```
 
 Get findings by product name (e.g., Systems Manager):
