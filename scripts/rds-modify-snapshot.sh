@@ -2,54 +2,79 @@
 
 set -euo pipefail
 
-# Simple output function (no timestamps for cleaner display)
-output() {
-    echo "$1"
+# Color definitions for better UI
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Output functions
+info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+error() {
+    echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
 check_dependencies() {
-    if ! command -v aws > /dev/null; then
-        output "Error: aws-cli is not installed or not in PATH."
+    if ! command -v aws &> /dev/null; then
+        error "aws-cli is not installed or not in PATH."
         exit 1
     fi
 }
 
 check_aws_auth() {
-    if ! ACCOUNT=$(aws sts get-caller-identity --query "Account" --output text 2>/dev/null); then
-        output "Error: invalid or missing AWS credentials/access keys."
+    local account region
+    if ! account=$(aws sts get-caller-identity --query "Account" --output text 2>/dev/null); then
+        error "Invalid or missing AWS credentials/access keys."
         exit 1
-    else
-        AWS_ACCOUNT="$ACCOUNT"
-        AWS_REGION=$(aws configure get region)
-        
-        output "AWS ACCOUNT: $AWS_ACCOUNT"
-        output "AWS REGION: ${AWS_REGION:-not set}"
     fi
+    
+    region=$(aws configure get region 2>/dev/null || echo "not set")
+    info "AWS Account: $account"
+    info "AWS Region: $region"
 }
 
 usage() {
-    echo "Usage: $0 --db <db-instance-identifier> --source-option <option-group-name> --target-option <option-group-name> [--dry-run]"
-    echo ""
-    echo "Modifies RDS DB snapshots by changing their option group based on source option group filter."
-    echo ""
-    echo "Required arguments:"
-    echo "  --db               The DB instance identifier to filter snapshots (optional)"
-    echo "  --source-option    The source option group name to filter snapshots"
-    echo "  --target-option    The target option group name to apply to matching snapshots"
-    echo ""
-    echo "Optional arguments:"
-    echo "  --dry-run          Show what would be done without making changes"
-    echo "  --help, -h         Show this help message"
-    echo ""
-    echo "Examples:"
-    echo "  # Modify all snapshots for instance 'mydb' from 'old-opt-group' to 'new-opt-group'"
-    echo "  $0 --db mydb --source-option old-opt-group --target-option new-opt-group"
-    echo ""
-    echo "  # Modify all snapshots (any instance) from 'old-opt-group' to 'new-opt-group'"
-    echo "  $0 --source-option old-opt-group --target-option new-opt-group"
-    echo ""
-    echo "  # Dry run to see what would be modified"
-    echo "  $0 --db mydb --source-option old-opt-group --target-option new-opt-group --dry-run"
+    cat << EOF
+Usage: $0 --source-option <source-option-group> --target-option <target-option-group> [OPTIONS]
+
+Modifies RDS DB snapshots by changing their option group based on source option group filter.
+
+Required arguments:
+  --source-option    The source option group name to filter snapshots
+  --target-option    The target option group name to apply to matching snapshots
+
+Optional arguments:
+  --db               Filter by specific DB instance identifier
+  --dry-run          Show what would be done without making changes
+  --yes, -y          Skip confirmation prompt (use with caution)
+  --help, -h         Show this help message
+
+Examples:
+  # Modify all snapshots from 'old-group' to 'new-group'
+  $0 --source-option old-group --target-option new-group
+
+  # Modify snapshots for specific instance only
+  $0 --db mydb-instance --source-option old-group --target-option new-group
+
+  # Preview changes without executing
+  $0 --source-option old-group --target-option new-group --dry-run
+
+  # Skip confirmation (for automation)
+  $0 --source-option old-group --target-option new-group --yes
+
+EOF
 }
 
 # Parse arguments
@@ -57,18 +82,31 @@ DB_INSTANCE=""
 SOURCE_OPTION=""
 TARGET_OPTION=""
 DRY_RUN=false
+SKIP_CONFIRM=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --db)
+            if [[ -z "${2:-}" || "$2" == --* ]]; then
+                error "Option --db requires a value"
+                exit 1
+            fi
             DB_INSTANCE="$2"
             shift 2
             ;;
         --source-option)
+            if [[ -z "${2:-}" || "$2" == --* ]]; then
+                error "Option --source-option requires a value"
+                exit 1
+            fi
             SOURCE_OPTION="$2"
             shift 2
             ;;
         --target-option)
+            if [[ -z "${2:-}" || "$2" == --* ]]; then
+                error "Option --target-option requires a value"
+                exit 1
+            fi
             TARGET_OPTION="$2"
             shift 2
             ;;
@@ -76,12 +114,16 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
+        --yes|-y)
+            SKIP_CONFIRM=true
+            shift
+            ;;
         --help|-h)
             usage
             exit 0
             ;;
         *)
-            echo "Unknown option: $1"
+            error "Unknown option: $1"
             usage
             exit 1
             ;;
@@ -90,111 +132,165 @@ done
 
 # Validate required arguments
 if [[ -z "$SOURCE_OPTION" ]]; then
-    output "Error: --source-option is required"
+    error "Missing required argument: --source-option"
     usage
     exit 1
 fi
 
 if [[ -z "$TARGET_OPTION" ]]; then
-    output "Error: --target-option is required"
+    error "Missing required argument: --target-option"
     usage
     exit 1
 fi
 
+# Validate source and target are not the same
+if [[ "$SOURCE_OPTION" == "$TARGET_OPTION" ]]; then
+    error "Source and target option groups cannot be the same: '$SOURCE_OPTION'"
+    exit 1
+fi
+
+print_banner() {
+    echo ""
+    echo "╔════════════════════════════════════════════════════════╗"
+    echo "║       RDS SNAPSHOT BATCH MODIFICATION                  ║"
+    echo "╚════════════════════════════════════════════════════════╝"
+    echo ""
+}
+
 main() {
-    # Banner without timestamps as requested
-    output "################################"
-    output "#   RDS SNAPSHOT BATCH MODIFICATION  #"
-    output "################################"
-    output ""
+    print_banner
     
     check_dependencies
     check_aws_auth
     
-    # Build the describe command
-    DESCRIBE_CMD="aws rds describe-db-snapshots --cli-no-pager"
-    
+    echo ""
+    echo "Configuration:"
+    echo "  Source Option Group: $SOURCE_OPTION"
+    echo "  Target Option Group: $TARGET_OPTION"
     if [[ -n "$DB_INSTANCE" ]]; then
-        DESCRIBE_CMD+=" --db-instance-identifier \"$DB_INSTANCE\""
-        output "Filtering by DB instance: $DB_INSTANCE"
+        echo "  DB Instance Filter:  $DB_INSTANCE"
     fi
-    
-    DESCRIBE_CMD+=" --query \"DBSnapshots[?OptionGroupName=='$SOURCE_OPTION'].DBSnapshotIdentifier\" --output text"
-    
-    output "Source option group: $SOURCE_OPTION"
-    output "Target option group: $TARGET_OPTION"
+    echo ""
     
     if [[ "$DRY_RUN" = true ]]; then
-        output "DRY RUN MODE: No changes will be made"
+        warning "DRY RUN MODE: No changes will be made"
     fi
     
-    output ""
+    echo ""
+    info "Finding snapshots with option group '$SOURCE_OPTION'..."
     
-    # Execute the describe command to get matching snapshot IDs
-    output "Finding snapshots with option group '$SOURCE_OPTION'..."
+    # Build the describe command
+    local describe_args=()
+    describe_args+=("--cli-no-pager")
+    describe_args+=("--query" "DBSnapshots[?OptionGroupName=='$SOURCE_OPTION'].[DBSnapshotIdentifier,Engine,EngineVersion,SnapshotCreateTime]")
+    describe_args+=("--output" "text")
     
-    # Use a temporary variable to capture output and handle potential errors
-    SNAPSHOT_OUTPUT=$(eval "$DESCRIBE_CMD" 2>/dev/null || true)
+    if [[ -n "$DB_INSTANCE" ]]; then
+        describe_args+=("--db-instance-identifier" "$DB_INSTANCE")
+    fi
+    
+    # Execute the describe command
+    local snapshot_output
+    if ! snapshot_output=$(aws rds describe-db-snapshots "${describe_args[@]}" 2>/dev/null); then
+        error "Failed to retrieve snapshots from AWS"
+        exit 1
+    fi
     
     # Check if we got any results
-    if [[ -z "$SNAPSHOT_OUTPUT" || "$SNAPSHOT_OUTPUT" == "None" ]]; then
-        output "No snapshots found with option group '$SOURCE_OPTION'"
+    if [[ -z "$snapshot_output" || "$snapshot_output" == "None" ]]; then
+        warning "No snapshots found with option group '$SOURCE_OPTION'"
         if [[ -n "$DB_INSTANCE" ]]; then
-            output "  (filtered by DB instance: $DB_INSTANCE)"
+            info "(filtered by DB instance: $DB_INSTANCE)"
         fi
         exit 0
     fi
     
-    # Convert output to array (handles multiple lines/spaces)
-    IFS=$'\n' read -rd '' -a SNAPSHOT_IDS <<<"$SNAPSHOT_OUTPUT"
-    # Remove empty elements
-    SNAPSHOT_IDS=("${SNAPSHOT_IDS[@]//$'\n'}")
-    SNAPSHOT_IDS=($(for id in "${SNAPSHOT_IDS[@]}"; do [[ -n "$id" ]] && echo "$id"; done))
+    # Parse snapshot data
+    local snapshots=()
+    local snapshot_id engine version created
+    while IFS=$'\t' read -r snapshot_id engine version created; do
+        [[ -n "$snapshot_id" ]] && snapshots+=("$snapshot_id|$engine|$version|$created")
+    done <<< "$snapshot_output"
     
-    if [[ ${#SNAPSHOT_IDS[@]} -eq 0 ]]; then
-        output "No valid snapshots found with option group '$SOURCE_OPTION'"
+    if [[ ${#snapshots[@]} -eq 0 ]]; then
+        warning "No valid snapshots found with option group '$SOURCE_OPTION'"
         exit 0
     fi
     
-    output "Found ${#SNAPSHOT_IDS[@]} snapshot(s) to process:"
-    for snap in "${SNAPSHOT_IDS[@]}"; do
-        output "  - $snap"
+    echo ""
+    info "Found ${#snapshots[@]} snapshot(s) to process:"
+    echo ""
+    printf "%-40s %-12s %-15s %-25s\n" "SNAPSHOT ID" "ENGINE" "VERSION" "CREATED"
+    printf "%-40s %-12s %-15s %-25s\n" "----------------------------------------" "------------" "---------------" "-------------------------"
+    for snap in "${snapshots[@]}"; do
+        IFS='|' read -r snapshot_id engine version created <<< "$snap"
+        printf "%-40s %-12s %-15s %-25s\n" "$snapshot_id" "$engine" "$version" "$created"
     done
-    output ""
+    echo ""
+    
+    # Confirmation prompt (unless dry-run or --yes)
+    if [[ "$DRY_RUN" = false && "$SKIP_CONFIRM" = false ]]; then
+        echo ""
+        warning "This will modify ${#snapshots[@]} snapshot(s) to use option group '$TARGET_OPTION'"
+        read -p "Do you want to continue? (y/N): " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            info "Operation cancelled by user"
+            exit 0
+        fi
+        echo ""
+    fi
     
     # Process each snapshot
     local processed=0
     local failed=0
     
-    for SNAPSHOT_ID in "${SNAPSHOT_IDS[@]}"; do
+    for snap in "${snapshots[@]}"; do
+        IFS='|' read -r SNAPSHOT_ID _ _ _ <<< "$snap"
         processed=$((processed + 1))
-        output "[$processed/${#SNAPSHOT_IDS[@]}] Processing snapshot: $SNAPSHOT_ID"
+        
+        echo ""
+        info "[$processed/${#snapshots[@]}] Processing: $SNAPSHOT_ID"
         
         if [[ "$DRY_RUN" = true ]]; then
-            output "  [DRY RUN] Would execute: aws rds modify-db-snapshot --db-snapshot-identifier \"$SNAPSHOT_ID\" --option-group-name \"$TARGET_OPTION\" --cli-no-pager"
+            info "  [DRY RUN] Would execute: aws rds modify-db-snapshot --db-snapshot-identifier \"$SNAPSHOT_ID\" --option-group-name \"$TARGET_OPTION\""
         else
-            output "  Modifying snapshot to use option group: $TARGET_OPTION"
-            aws rds modify-db-snapshot \
+            info "  Modifying snapshot to use option group: $TARGET_OPTION"
+            if aws rds modify-db-snapshot \
                 --db-snapshot-identifier "$SNAPSHOT_ID" \
                 --option-group-name "$TARGET_OPTION" \
-                --cli-no-pager
-            output "  Successfully modified snapshot: $SNAPSHOT_ID"
+                --cli-no-pager > /dev/null 2>&1; then
+                success "  Successfully modified snapshot: $SNAPSHOT_ID"
+            else
+                error "  Failed to modify snapshot: $SNAPSHOT_ID"
+                failed=$((failed + 1))
+            fi
         fi
     done
     
-    output ""
-    output "Processing complete:"
-    output "  Total snapshots found: ${#SNAPSHOT_IDS[@]}"
-    output "  Successfully processed: $processed"
-    if [[ "$DRY_RUN" = false ]]; then
-        output "  Failed: $failed"
-    fi
-    
+    echo ""
+    echo "══════════════════════════════════════════════════════════"
     if [[ "$DRY_RUN" = true ]]; then
-        output "DRY RUN COMPLETED: No changes were made"
+        info "DRY RUN COMPLETED"
+        info "  Total snapshots found: ${#snapshots[@]}"
+        info "  No changes were made"
     else
-        output "BATCH MODIFICATION COMPLETED"
+        if [[ $failed -eq 0 ]]; then
+            success "BATCH MODIFICATION COMPLETED SUCCESSFULLY"
+        else
+            warning "BATCH MODIFICATION COMPLETED WITH ERRORS"
+        fi
+        info "  Total snapshots found: ${#snapshots[@]}"
+        info "  Successfully processed: $((processed - failed))"
+        info "  Failed: $failed"
+    fi
+    echo "══════════════════════════════════════════════════════════"
+    echo ""
+    
+    # Exit with error code if any failed
+    if [[ $failed -gt 0 ]]; then
+        exit 1
     fi
 }
 
-main
+main "$@"
