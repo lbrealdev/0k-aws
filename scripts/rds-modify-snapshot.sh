@@ -102,16 +102,13 @@ if [[ -z "$TARGET_OPTION" ]]; then
 fi
 
 main() {
-    log "################################"
-    log "#   RDS SNAPSHOT BATCH MODIFICATION  #"
-    log "################################"
-    log ""
+    # Removed banner as requested
     
     check_dependencies
     check_aws_auth
     
     # Build the describe command
-    DESCRIBE_CMD="aws rds describe-db-snapshots"
+    DESCRIBE_CMD="aws rds describe-db-snapshots --cli-no-pager"
     
     if [[ -n "$DB_INSTANCE" ]]; then
         DESCRIBE_CMD+=" --db-instance-identifier \"$DB_INSTANCE\""
@@ -170,12 +167,13 @@ main() {
         log "[$processed/${#SNAPSHOT_IDS[@]}] Processing snapshot: $SNAPSHOT_ID"
         
         if [[ "$DRY_RUN" = true ]]; then
-            log "  [DRY RUN] Would execute: aws rds modify-db-snapshot --db-snapshot-identifier \"$SNAPSHOT_ID\" --option-group-name \"$TARGET_OPTION\""
+            log "  [DRY RUN] Would execute: aws rds modify-db-snapshot --db-snapshot-identifier \"$SNAPSHOT_ID\" --option-group-name \"$TARGET_OPTION\" --cli-no-pager"
         else
             log "  Modifying snapshot to use option group: $TARGET_OPTION"
             aws rds modify-db-snapshot \
                 --db-snapshot-identifier "$SNAPSHOT_ID" \
-                --option-group-name "$TARGET_OPTION"
+                --option-group-name "$TARGET_OPTION" \
+                --cli-no-pager
             log "  Successfully modified snapshot: $SNAPSHOT_ID"
         fi
     done
