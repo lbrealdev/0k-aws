@@ -196,18 +196,18 @@ main() {
     fi
     
     if [[ -n "$DB_INSTANCE" ]]; then
-        [[ "$VERBOSE" = true ]] && info "Command: aws rds describe-db-snapshots --db-instance-identifier $DB_INSTANCE --query \"$query\" --output text --cli-no-pager"
+        [[ "$VERBOSE" = true ]] && info "Command: aws rds describe-db-snapshots --db-instance-identifier $DB_INSTANCE --query \"$query\" --output text --no-cli-pager"
         snapshot_output=$(aws rds describe-db-snapshots \
             --db-instance-identifier "$DB_INSTANCE" \
             --query "$query" \
             --output text \
-            --cli-no-pager 2>&1) || true
+            --no-cli-pager 2>&1) || true
     else
-        [[ "$VERBOSE" = true ]] && info "Command: aws rds describe-db-snapshots --query \"$query\" --output text --cli-no-pager"
+        [[ "$VERBOSE" = true ]] && info "Command: aws rds describe-db-snapshots --query \"$query\" --output text --no-cli-pager"
         snapshot_output=$(aws rds describe-db-snapshots \
             --query "$query" \
             --output text \
-            --cli-no-pager 2>&1) || true
+            --no-cli-pager 2>&1) || true
     fi
     exit_code=$?
     
@@ -281,7 +281,7 @@ main() {
             if aws rds modify-db-snapshot \
                 --db-snapshot-identifier "$SNAPSHOT_ID" \
                 --option-group-name "$TARGET_OPTION" \
-                --cli-no-pager > /dev/null 2>&1; then
+                --no-cli-pager > /dev/null 2>&1; then
                 success "  Successfully modified snapshot: $SNAPSHOT_ID"
             else
                 error "  Failed to modify snapshot: $SNAPSHOT_ID"
