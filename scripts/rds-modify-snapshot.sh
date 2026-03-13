@@ -59,6 +59,7 @@ Optional arguments:
   --db               Filter by specific DB instance identifier
   --dry-run          Show what would be done without making changes
   --yes, -y          Skip confirmation prompt (use with caution)
+  --verbose, -v      Show detailed output for debugging
   --help, -h         Show this help message
 
 Examples:
@@ -83,6 +84,7 @@ SOURCE_OPTION=""
 TARGET_OPTION=""
 DRY_RUN=false
 SKIP_CONFIRM=false
+VERBOSE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -116,6 +118,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --yes|-y)
             SKIP_CONFIRM=true
+            shift
+            ;;
+        --verbose|-v)
+            VERBOSE=true
             shift
             ;;
         --help|-h)
@@ -179,20 +185,36 @@ main() {
     echo ""
     info "Finding snapshots with option group '$SOURCE_OPTION'..."
     
-    # Build the describe command
-    local describe_args=()
-    describe_args+=("--cli-no-pager")
-    describe_args+=("--query" "DBSnapshots[?OptionGroupName=='$SOURCE_OPTION'].[DBSnapshotIdentifier,Engine,EngineVersion,SnapshotCreateTime]")
-    describe_args+=("--output" "text")
+    # Build the describe command - using simpler approach for cross-platform compatibility
+    local query="DBSnapshots[?OptionGroupName=='$SOURCE_OPTION'].[DBSnapshotIdentifier,Engine,EngineVersion,SnapshotCreateTime]"
     
-    if [[ -n "$DB_INSTANCE" ]]; then
-        describe_args+=("--db-instance-identifier" "$DB_INSTANCE")
+    # Execute the describe command with proper error handling
+    local snapshot_output exit_code
+    
+    if [[ "$VERBOSE" = true ]]; then
+        info "Executing AWS command with query: $query"
     fi
     
-    # Execute the describe command
-    local snapshot_output
-    if ! snapshot_output=$(aws rds describe-db-snapshots "${describe_args[@]}" 2>/dev/null); then
+    if [[ -n "$DB_INSTANCE" ]]; then
+        [[ "$VERBOSE" = true ]] && info "Command: aws rds describe-db-snapshots --db-instance-identifier $DB_INSTANCE --query \"$query\" --output text --cli-no-pager"
+        snapshot_output=$(aws rds describe-db-snapshots \
+            --db-instance-identifier "$DB_INSTANCE" \
+            --query "$query" \
+            --output text \
+            --cli-no-pager 2>&1) || true
+    else
+        [[ "$VERBOSE" = true ]] && info "Command: aws rds describe-db-snapshots --query \"$query\" --output text --cli-no-pager"
+        snapshot_output=$(aws rds describe-db-snapshots \
+            --query "$query" \
+            --output text \
+            --cli-no-pager 2>&1) || true
+    fi
+    exit_code=$?
+    
+    if [[ $exit_code -ne 0 ]] || [[ "$snapshot_output" == *"Error"* ]] || [[ "$snapshot_output" == *"error"* ]]; then
         error "Failed to retrieve snapshots from AWS"
+        error "Exit code: $exit_code"
+        error "Output: $snapshot_output"
         exit 1
     fi
     
