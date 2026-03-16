@@ -57,6 +57,7 @@ Required arguments:
 
 Optional arguments:
   --db               Filter by specific DB instance identifier
+  --snapshot-type   Filter by snapshot type: awsbackup or manual (default: awsbackup)
   --dry-run          Show what would be done without making changes
   --yes, -y          Skip confirmation prompt (use with caution)
   --verbose, -v      Show detailed output for debugging
@@ -75,6 +76,9 @@ Examples:
   # Skip confirmation (for automation)
   $0 --source-option old-group --target-option new-group --yes
 
+  # Filter by snapshot type (awsbackup or manual)
+  $0 --source-option old-group --target-option new-group --snapshot-type manual
+
 EOF
 }
 
@@ -82,6 +86,7 @@ EOF
 DB_INSTANCE=""
 SOURCE_OPTION=""
 TARGET_OPTION=""
+SNAPSHOT_TYPE="awsbackup"
 DRY_RUN=false
 SKIP_CONFIRM=false
 VERBOSE=false
@@ -110,6 +115,14 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             TARGET_OPTION="$2"
+            shift 2
+            ;;
+        --snapshot-type)
+            if [[ -z "${2:-}" || "$2" == --* ]]; then
+                error "Option --snapshot-type requires a value"
+                exit 1
+            fi
+            SNAPSHOT_TYPE="$2"
             shift 2
             ;;
         --dry-run)
@@ -155,6 +168,13 @@ if [[ "$SOURCE_OPTION" == "$TARGET_OPTION" ]]; then
     exit 1
 fi
 
+# Validate snapshot type
+if [[ "$SNAPSHOT_TYPE" != "awsbackup" && "$SNAPSHOT_TYPE" != "manual" ]]; then
+    error "Invalid snapshot type: $SNAPSHOT_TYPE. Must be 'awsbackup' or 'manual'"
+    usage
+    exit 1
+fi
+
 print_banner() {
     echo ""
     echo "╔════════════════════════════════════════════════════════╗"
@@ -173,6 +193,7 @@ main() {
     echo "Configuration:"
     echo "  Source Option Group: $SOURCE_OPTION"
     echo "  Target Option Group: $TARGET_OPTION"
+    echo "  Snapshot Type:       $SNAPSHOT_TYPE"
     if [[ -n "$DB_INSTANCE" ]]; then
         echo "  DB Instance Filter:  $DB_INSTANCE"
     fi
@@ -183,7 +204,7 @@ main() {
     fi
     
     echo ""
-    info "Finding snapshots with option group '$SOURCE_OPTION'..."
+    info "Finding '$SNAPSHOT_TYPE' snapshots with option group '$SOURCE_OPTION'..."
     
     # Build the describe command - using simpler approach for cross-platform compatibility
     local query="DBSnapshots[?OptionGroupName=='$SOURCE_OPTION'].[DBSnapshotIdentifier,Engine,EngineVersion,SnapshotCreateTime]"
@@ -196,15 +217,17 @@ main() {
     fi
     
     if [[ -n "$DB_INSTANCE" ]]; then
-        [[ "$VERBOSE" = true ]] && info "Command: aws rds describe-db-snapshots --db-instance-identifier $DB_INSTANCE --query \"$query\" --output text --no-cli-pager"
+        [[ "$VERBOSE" = true ]] && info "Command: aws rds describe-db-snapshots --snapshot-type $SNAPSHOT_TYPE --db-instance-identifier $DB_INSTANCE --query \"$query\" --output text --no-cli-pager"
         snapshot_output=$(aws rds describe-db-snapshots \
+            --snapshot-type "$SNAPSHOT_TYPE" \
             --db-instance-identifier "$DB_INSTANCE" \
             --query "$query" \
             --output text \
             --no-cli-pager 2>&1) || true
     else
-        [[ "$VERBOSE" = true ]] && info "Command: aws rds describe-db-snapshots --query \"$query\" --output text --no-cli-pager"
+        [[ "$VERBOSE" = true ]] && info "Command: aws rds describe-db-snapshots --snapshot-type $SNAPSHOT_TYPE --query \"$query\" --output text --no-cli-pager"
         snapshot_output=$(aws rds describe-db-snapshots \
+            --snapshot-type "$SNAPSHOT_TYPE" \
             --query "$query" \
             --output text \
             --no-cli-pager 2>&1) || true
@@ -220,7 +243,7 @@ main() {
     
     # Check if we got any results
     if [[ -z "$snapshot_output" || "$snapshot_output" == "None" ]]; then
-        warning "No snapshots found with option group '$SOURCE_OPTION'"
+        warning "No '$SNAPSHOT_TYPE' snapshots found with option group '$SOURCE_OPTION'"
         if [[ -n "$DB_INSTANCE" ]]; then
             info "(filtered by DB instance: $DB_INSTANCE)"
         fi
