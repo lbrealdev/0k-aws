@@ -23,16 +23,23 @@ check_dependencies() {
     fi
 }
 
-check_aws_auth() {
+get_account_info() {
+    local profile="$1"
     local account region
-    if ! account=$(aws sts get-caller-identity --query "Account" --output text 2>/dev/null); then
-        error "Invalid or missing AWS credentials/access keys."
-        exit 1
+    
+    if [[ -n "$profile" ]]; then
+        if ! account=$(AWS_PROFILE="$profile" aws sts get-caller-identity --query "Account" --output text 2>/dev/null); then
+            return 1
+        fi
+        region=$(AWS_PROFILE="$profile" aws configure get region 2>/dev/null) || true
+    else
+        if ! account=$(aws sts get-caller-identity --query "Account" --output text 2>/dev/null); then
+            return 1
+        fi
+        region=$(aws configure get region 2>/dev/null) || true
     fi
     
-    region=$(aws configure get region 2>/dev/null || echo "not set")
-    info "AWS Account: $account"
-    info "AWS Region: $region"
+    echo "$account|$region"
 }
 
 usage() {
@@ -42,42 +49,115 @@ Usage: $0 [OPTIONS]
 Lists all AWS resources in the account using Resource Groups Tagging API.
 
 Optional arguments:
-  --region, -r       AWS region (default: from AWS config)
-  --output, -o       Output format: text or table (default: text)
-  --help, -h         Show this help message
+  --region, -r           AWS region (default: from AWS config)
+  --profile, -p          AWS profile name (can be used multiple times)
+  --profiles             Comma-separated AWS profile names
+  --report               Save output to files instead of stdout
+  --report-dir           Custom report directory (default: report/)
+  --output, -o           Output format: text or table (default: text)
+  --help, -h             Show this help message
 
 Examples:
   # List all resources in default region
   $0
 
-  # List all resources in specific region
-  $0 --region us-east-1
+  # List resources for specific profile
+  $0 --profile dev
 
-  # List resources in table format
-  $0 --output table
+  # List resources for multiple profiles
+  $0 --profiles dev,staging,prod
+
+  # Generate report for multiple profiles
+  $0 --profiles dev,staging,prod --report
+
+  # Generate report in custom directory
+  $0 --profiles dev,staging --report --report-dir ./inventory
 
 EOF
 }
 
 REGION=""
 OUTPUT="text"
+REPORT=false
+REPORT_DIR="report"
+PROFILES=()
 
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --region|-r)
+preprocess_args() {
+    local args=("$@")
+    if [[ ${#args[@]} -gt 0 ]]; then
+        local new_args=()
+        for arg in "${args[@]}"; do
+            if [[ "$arg" == --*=* ]]; then
+                local key="${arg%%=*}"
+                local value="${arg#*=}"
+                new_args+=("$key" "$value")
+            else
+                new_args+=("$arg")
+            fi
+        done
+        printf '%s\n' "${new_args[@]}"
+    fi
+}
+
+set -- $(preprocess_args "$@")
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --region|-r)
+                if [[ "$1" == --*=* ]]; then
+                    REGION="${1#*=}"
+                elif [[ -z "${2:-}" || "$2" == --* ]]; then
+                    error "Option --region requires a value"
+                    exit 1
+                else
+                    REGION="$2"
+                fi
+                shift 2
+                ;;
+        --profile|-p)
+            if [[ "$1" == --*=* ]]; then
+                PROFILES+=("${1#*=}")
+            elif [[ -z "${2:-}" || "$2" == --* ]]; then
+                error "Option --profile requires a value"
+                exit 1
+            else
+                PROFILES+=("$2")
+            fi
+            shift 2
+            ;;
+        --profiles)
             if [[ -z "${2:-}" || "$2" == --* ]]; then
-                error "Option --region requires a value"
+                error "Option --profiles requires a value"
                 exit 1
             fi
-            REGION="$2"
+            IFS=',' read -ra ADDR <<< "$2"
+            for profile in "${ADDR[@]}"; do
+                PROFILES+=("$profile")
+            done
+            shift 2
+            ;;
+        --report)
+            REPORT=true
+            shift
+            ;;
+        --report-dir)
+            if [[ -z "${2:-}" || "$2" == --* ]]; then
+                error "Option --report-dir requires a value"
+                exit 1
+            fi
+            REPORT_DIR="$2"
             shift 2
             ;;
         --output|-o)
-            if [[ -z "${2:-}" || "$2" == --* ]]; then
+            if [[ "$1" == --*=* ]]; then
+                OUTPUT="${1#*=}"
+            elif [[ -z "${2:-}" || "$2" == --* ]]; then
                 error "Option --output requires a value"
                 exit 1
+            else
+                OUTPUT="$2"
             fi
-            OUTPUT="$2"
             shift 2
             ;;
         --help|-h)
@@ -90,7 +170,10 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
     esac
-done
+    done
+}
+
+parse_args "$@"
 
 if [[ -z "$REGION" ]]; then
     REGION=$(aws configure get region 2>/dev/null) || true
@@ -106,35 +189,36 @@ if [[ "$OUTPUT" != "text" && "$OUTPUT" != "table" ]]; then
     exit 1
 fi
 
-print_banner() {
-    echo ""
-    echo "╔════════════════════════════════════════════════════════╗"
-    echo "║          AWS RESOURCE LISTING                          ║"
-    echo "╚════════════════════════════════════════════════════════╝"
-    echo ""
-}
+if [[ ${#PROFILES[@]} -eq 0 ]]; then
+    PROFILES+=("")
+fi
 
 list_resources() {
+    local profile="$1"
+    local target_region="$2"
+    
+    local aws_profile_env=""
+    if [[ -n "$profile" ]]; then
+        aws_profile_env="AWS_PROFILE=$profile"
+    fi
+    
     local arns=()
     local pagination_token=""
     local page_count=0
-    
-    info "Fetching resources from region: $REGION"
-    echo ""
     
     while true; do
         page_count=$((page_count + 1))
         
         local response
         if [[ -n "$pagination_token" ]]; then
-            response=$(aws resourcegroupstaggingapi get-resources \
-                --region "$REGION" \
+            response=$(eval "$aws_profile_env" aws resourcegroupstaggingapi get-resources \
+                --region "$target_region" \
                 --pagination-token "$pagination_token" \
                 --output json \
                 --no-cli-pager 2>&1)
         else
-            response=$(aws resourcegroupstaggingapi get-resources \
-                --region "$REGION" \
+            response=$(eval "$aws_profile_env" aws resourcegroupstaggingapi get-resources \
+                --region "$target_region" \
                 --output json \
                 --no-cli-pager 2>&1)
         fi
@@ -142,7 +226,7 @@ list_resources() {
         if [[ $? -ne 0 ]] || [[ "$response" == *"Error"* ]]; then
             error "Failed to retrieve resources from AWS"
             error "Response: $response"
-            exit 1
+            return 1
         fi
         
         local page_arns
@@ -159,44 +243,135 @@ list_resources() {
         if [[ -z "$pagination_token" || "$pagination_token" == "null" ]]; then
             break
         fi
-        
-        info "Fetching page $page_count..."
     done
     
-    if [[ ${#arns[@]} -eq 0 ]]; then
-        info "No resources found in region: $REGION"
-        exit 0
-    fi
+    echo "${arns[*]}"
+    echo "$page_count"
+}
+
+save_report() {
+    local profile="$1"
+    local account="$2"
+    local target_region="$3"
+    local resources="$4"
     
-    info "Found ${#arns[@]} resource(s) across $page_count page(s)"
-    echo ""
-    
-    if [[ "$OUTPUT" == "table" ]]; then
-        printf "%-80s\n" "ARN"
-        printf "%-80s\n" "--------------------------------------------------------------------------------"
-        for arn in "${arns[@]}"; do
-            printf "%-80s\n" "$arn"
-        done
+    local dir_name
+    if [[ -n "$profile" ]]; then
+        dir_name="$REPORT_DIR/$profile"
     else
-        for arn in "${arns[@]}"; do
-            echo "$arn"
-        done
+        dir_name="$REPORT_DIR/default"
     fi
+    
+    mkdir -p "$dir_name"
+    
+    local output_file="$dir_name/resources.txt"
+    echo "$resources" > "$output_file"
+    
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    
+    local resource_count
+    resource_count=$(echo "$resources" | grep -c . || echo "0")
+    
+    cat << EOF
+profile=$profile
+account=$account
+region=$target_region
+resource_count=$resource_count
+output_file=$output_file
+EOF
+}
+
+generate_summary() {
+    local summaries=("$@")
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    
+    echo "{"
+    echo "  \"generated_at\": \"$timestamp\","
+    echo "  \"report_dir\": \"$REPORT_DIR\","
+    echo "  \"region\": \"$REGION\","
+    echo "  \"profiles\": ["
+    
+    local first=true
+    for summary in "${summaries[@]}"; do
+        if [[ -n "$summary" ]]; then
+            if [[ "$first" == true ]]; then
+                first=false
+            else
+                echo ","
+            fi
+            echo "    {"
+            
+            while IFS='=' read -r key value; do
+                [[ -z "$key" ]] && continue
+                if [[ "$key" == "resource_count" || "$key" == "account" ]]; then
+                    echo -n "      \"$key\": $value, "
+                else
+                    echo -n "      \"$key\": \"$value\", "
+                fi
+            done <<< "$summary"
+            
+            echo -n "    }"
+        fi
+    done
+    
+    echo ""
+    echo "  ]"
+    echo "}"
 }
 
 main() {
-    print_banner
-    
     check_dependencies
-    check_aws_auth
     
-    echo ""
-    echo "Configuration:"
-    echo "  Region:  $REGION"
-    echo "  Output:  $OUTPUT"
-    echo ""
+    local summaries=()
+    local all_resources=""
     
-    list_resources
+    for profile in "${PROFILES[@]}"; do
+        local account region
+        local account_info
+        account_info=$(get_account_info "$profile") || {
+            error "Failed to get account info for profile: ${profile:-default}"
+            continue
+        }
+        
+        account=$(echo "$account_info" | cut -d'|' -f1)
+        region=$(echo "$account_info" | cut -d'|' -f2)
+        
+        if [[ -z "$region" ]]; then
+            region="$REGION"
+        fi
+        
+        local result
+        result=$(list_resources "$profile" "$region") || continue
+        
+        local resources
+        local page_count
+        resources=$(echo "$result" | head -n -1)
+        page_count=$(echo "$result" | tail -n 1)
+        
+        local resource_count
+        resource_count=$(echo "$resources" | grep -c . || echo "0")
+        
+        if [[ "$REPORT" == true ]]; then
+            local summary
+            summary=$(save_report "$profile" "$account" "$region" "$resources")
+            summaries+=("$summary")
+            echo "profile=$profile account=$account region=$region resource_count=$resource_count saved_to=$REPORT_DIR/$profile/resources.txt"
+        else
+            echo "profile=$profile account=$account region=$region resource_count=$resource_count"
+            echo ""
+            echo "$resources"
+        fi
+    done
+    
+    if [[ "$REPORT" == true && ${#summaries[@]} -gt 0 ]]; then
+        echo ""
+        local summary_json
+        summary_json=$(generate_summary "${summaries[@]}")
+        echo "$summary_json" > "$REPORT_DIR/summary.json"
+        echo "summary saved to: $REPORT_DIR/summary.json"
+    fi
 }
 
 main "$@"
