@@ -26,26 +26,27 @@ check_dependencies() {
 get_account_info() {
     local profile="$1"
     local account region
-    local error_msg
     
     if [[ -n "$profile" ]]; then
-        error_msg=$(AWS_PROFILE="$profile" aws sts get-caller-identity --query "Account" --output text --region "${REGION:-us-east-1}" 2>&1) || true
-        if [[ -z "$error_msg" ]]; then
-            account=$(AWS_PROFILE="$profile" aws sts get-caller-identity --query "Account" --output text --region "${REGION:-us-east-1}" 2>/dev/null)
-            region=$(AWS_PROFILE="$profile" aws configure get region 2>/dev/null) || true
-        else
-            error "Failed to get account info for profile '$profile': $error_msg"
+        # Try with specific profile (SSO or credential file)
+        account=$(AWS_PROFILE="$profile" aws sts get-caller-identity --query "Account" --output text 2>&1) || {
+            error "Failed to authenticate profile '$profile': $account"
+            if [[ "$account" == *"SSO"* || "$account" == *"sso"* || "$account" == *"token"* ]]; then
+                error "SSO session may be expired. Run: aws sso login --profile $profile"
+            fi
             return 1
-        fi
+        }
+        region=$(AWS_PROFILE="$profile" aws configure get region 2>/dev/null)
     else
-        error_msg=$(aws sts get-caller-identity --query "Account" --output text --region "${REGION:-us-east-1}" 2>&1) || true
-        if [[ -z "$error_msg" ]]; then
-            account=$(aws sts get-caller-identity --query "Account" --output text --region "${REGION:-us-east-1}" 2>/dev/null)
-            region=$(aws configure get region 2>/dev/null) || true
-        else
-            error "Failed to get account info: $error_msg"
+        # Try with current auth (env vars or exported AWS_PROFILE)
+        account=$(aws sts get-caller-identity --query "Account" --output text 2>&1) || {
+            error "Failed to authenticate: $account"
+            if [[ "$account" == *"SSO"* || "$account" == *"sso"* || "$account" == *"token"* ]]; then
+                error "SSO session may be expired. Run: aws sso login"
+            fi
             return 1
-        fi
+        }
+        region=$(aws configure get region 2>/dev/null)
     fi
     
     echo "$account|$region"
@@ -58,7 +59,7 @@ Usage: $0 [OPTIONS]
 Lists all AWS resources in the account using Resource Groups Tagging API.
 
 Optional arguments:
-  --region, -r           AWS region (default: from AWS config)
+  --region, -r           AWS region (override profile's region)
   --profile, -p          AWS profile name (can be used multiple times)
   --profiles             Comma-separated AWS profile names
   --report               Save output to files instead of stdout
@@ -66,21 +67,26 @@ Optional arguments:
   --output, -o           Output format: text or table (default: text)
   --help, -h             Show this help message
 
+Authentication:
+  - Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN
+  - SSO profiles: export AWS_PROFILE=<profile> then aws sso login
+  - Credential files: ~/.aws/credentials and ~/.aws/config
+
 Examples:
-  # List all resources in default region
+  # List resources using current auth (env vars or exported AWS_PROFILE)
   $0
 
   # List resources for specific profile
   $0 --profile dev
 
-  # List resources for multiple profiles
+  # List resources for multiple profiles (switches between them)
   $0 --profiles dev,staging,prod
 
   # Generate report for multiple profiles
   $0 --profiles dev,staging,prod --report
 
-  # Generate report in custom directory
-  $0 --profiles dev,staging --report --report-dir ./inventory
+  # Override region for all profiles
+  $0 --profiles dev,staging --region us-east-1
 
 EOF
 }
@@ -142,7 +148,9 @@ parse_args() {
             fi
             IFS=',' read -ra ADDR <<< "$2"
             for profile in "${ADDR[@]}"; do
-                PROFILES+=("$profile")
+                # Trim leading/trailing whitespace
+                profile=$(echo "$profile" | xargs)
+                [[ -n "$profile" ]] && PROFILES+=("$profile")
             done
             shift 2
             ;;
@@ -183,15 +191,6 @@ parse_args() {
 }
 
 parse_args "$@"
-
-if [[ -z "$REGION" ]]; then
-    REGION=$(aws configure get region 2>/dev/null) || true
-fi
-
-if [[ -z "$REGION" ]]; then
-    error "No region specified. Use --region or configure AWS region."
-    exit 1
-fi
 
 if [[ "$OUTPUT" != "text" && "$OUTPUT" != "table" ]]; then
     error "Invalid output format: $OUTPUT. Must be 'text' or 'table'"
@@ -335,24 +334,35 @@ main() {
     
     local summaries=()
     local all_resources=""
+    local failed_profiles=()
     
     for profile in "${PROFILES[@]}"; do
         local account region
         local account_info
-        account_info=$(get_account_info "$profile") || {
-            error "Failed to get account info for profile: ${profile:-default}"
+        
+        # Get account info - exit on failure
+        if ! account_info=$(get_account_info "$profile"); then
+            failed_profiles+=("$profile")
             continue
-        }
+        fi
         
         account=$(echo "$account_info" | cut -d'|' -f1)
         region=$(echo "$account_info" | cut -d'|' -f2)
         
-        if [[ -z "$region" ]]; then
-            region="$REGION"
+        # Use --region override if provided, otherwise use profile's region
+        local target_region="${REGION:-$region}"
+        
+        if [[ -z "$target_region" ]]; then
+            error "No region available for profile '${profile:-default}'. Use --region or configure region in profile."
+            failed_profiles+=("$profile")
+            continue
         fi
         
         local result
-        result=$(list_resources "$profile" "$region") || continue
+        if ! result=$(list_resources "$profile" "$target_region"); then
+            failed_profiles+=("$profile")
+            continue
+        fi
         
         local resources
         local page_count
@@ -364,15 +374,22 @@ main() {
         
         if [[ "$REPORT" == true ]]; then
             local summary
-            summary=$(save_report "$profile" "$account" "$region" "$resources")
+            summary=$(save_report "$profile" "$account" "$target_region" "$resources")
             summaries+=("$summary")
-            echo "profile=$profile account=$account region=$region resource_count=$resource_count saved_to=$REPORT_DIR/$profile/resources.txt"
+            echo "profile=$profile account=$account region=$target_region resource_count=$resource_count saved_to=$REPORT_DIR/$profile/resources.txt"
         else
-            echo "profile=$profile account=$account region=$region resource_count=$resource_count"
+            echo "profile=$profile account=$account region=$target_region resource_count=$resource_count"
             echo ""
             echo "$resources"
         fi
     done
+    
+    # Report any failures
+    if [[ ${#failed_profiles[@]} -gt 0 ]]; then
+        echo ""
+        error "Failed profiles: ${failed_profiles[*]}"
+        exit 1
+    fi
     
     if [[ "$REPORT" == true && ${#summaries[@]} -gt 0 ]]; then
         echo ""
