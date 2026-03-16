@@ -245,7 +245,7 @@ list_resources() {
         fi
     done
     
-    echo "${arns[*]}"
+    printf '%s\n' "${arns[@]}"
     echo "$page_count"
 }
 
