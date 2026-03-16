@@ -26,17 +26,26 @@ check_dependencies() {
 get_account_info() {
     local profile="$1"
     local account region
+    local error_msg
     
     if [[ -n "$profile" ]]; then
-        if ! account=$(AWS_PROFILE="$profile" aws sts get-caller-identity --query "Account" --output text 2>/dev/null); then
+        error_msg=$(AWS_PROFILE="$profile" aws sts get-caller-identity --query "Account" --output text --region "${REGION:-us-east-1}" 2>&1) || true
+        if [[ -z "$error_msg" ]]; then
+            account=$(AWS_PROFILE="$profile" aws sts get-caller-identity --query "Account" --output text --region "${REGION:-us-east-1}" 2>/dev/null)
+            region=$(AWS_PROFILE="$profile" aws configure get region 2>/dev/null) || true
+        else
+            error "Failed to get account info for profile '$profile': $error_msg"
             return 1
         fi
-        region=$(AWS_PROFILE="$profile" aws configure get region 2>/dev/null) || true
     else
-        if ! account=$(aws sts get-caller-identity --query "Account" --output text 2>/dev/null); then
+        error_msg=$(aws sts get-caller-identity --query "Account" --output text --region "${REGION:-us-east-1}" 2>&1) || true
+        if [[ -z "$error_msg" ]]; then
+            account=$(aws sts get-caller-identity --query "Account" --output text --region "${REGION:-us-east-1}" 2>/dev/null)
+            region=$(aws configure get region 2>/dev/null) || true
+        else
+            error "Failed to get account info: $error_msg"
             return 1
         fi
-        region=$(aws configure get region 2>/dev/null) || true
     fi
     
     echo "$account|$region"
