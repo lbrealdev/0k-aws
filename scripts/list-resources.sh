@@ -21,35 +21,39 @@ check_dependencies() {
         error "aws-cli is not installed or not in PATH."
         exit 1
     fi
+    
+    if ! command -v jq &> /dev/null; then
+        error "jq is not installed or not in PATH."
+        exit 1
+    fi
 }
 
-get_account_info() {
+validate_auth() {
     local profile="$1"
-    local account region
+    local profile_arg=""
+    [[ -n "$profile" ]] && profile_arg="--profile $profile"
     
-    if [[ -n "$profile" ]]; then
-        # Try with specific profile (SSO or credential file)
-        account=$(AWS_PROFILE="$profile" aws sts get-caller-identity --query "Account" --output text 2>&1) || {
-            error "Failed to authenticate profile '$profile': $account"
-            if [[ "$account" == *"SSO"* || "$account" == *"sso"* || "$account" == *"token"* ]]; then
-                error "SSO session may be expired. Run: aws sso login --profile $profile"
-            fi
-            return 1
-        }
-        region=$(AWS_PROFILE="$profile" aws configure get region 2>/dev/null)
-    else
-        # Try with current auth (env vars or exported AWS_PROFILE)
-        account=$(aws sts get-caller-identity --query "Account" --output text 2>&1) || {
-            error "Failed to authenticate: $account"
-            if [[ "$account" == *"SSO"* || "$account" == *"sso"* || "$account" == *"token"* ]]; then
-                error "SSO session may be expired. Run: aws sso login"
-            fi
-            return 1
-        }
-        region=$(aws configure get region 2>/dev/null)
+    local result
+    if ! result=$(aws sts get-caller-identity $profile_arg --output json 2>&1); then
+        if [[ -n "$profile" ]]; then
+            error "Profile '$profile' not authenticated"
+            error "Run: aws sso login --profile $profile"
+        else
+            error "Not authenticated. Set AWS credentials or run: aws sso login"
+        fi
+        return 1
     fi
     
-    echo "$account|$region"
+    # Return account ID
+    echo "$result" | jq -r '.Account'
+}
+
+get_profile_region() {
+    local profile="$1"
+    local profile_arg=""
+    [[ -n "$profile" ]] && profile_arg="--profile $profile"
+    
+    aws configure get region $profile_arg 2>/dev/null || true
 }
 
 usage() {
@@ -59,7 +63,7 @@ Usage: $0 [OPTIONS]
 Lists all AWS resources in the account using Resource Groups Tagging API.
 
 Optional arguments:
-  --region, -r           AWS region (override profile's region)
+  --region, -r           AWS region (required if not configured in profile)
   --profile, -p          AWS profile name (can be used multiple times)
   --profiles             Comma-separated AWS profile names
   --report               Save output to files instead of stdout
@@ -74,7 +78,7 @@ Authentication:
 
 Examples:
   # List resources using current auth (env vars or exported AWS_PROFILE)
-  $0
+  $0 --region us-east-1
 
   # List resources for specific profile
   $0 --profile dev
@@ -97,49 +101,55 @@ REPORT=false
 REPORT_DIR="report"
 PROFILES=()
 
-preprocess_args() {
-    local args=("$@")
-    if [[ ${#args[@]} -gt 0 ]]; then
-        local new_args=()
-        for arg in "${args[@]}"; do
-            if [[ "$arg" == --*=* ]]; then
-                local key="${arg%%=*}"
-                local value="${arg#*=}"
-                new_args+=("$key" "$value")
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --region|--region=*|-r|-r=*)
+            if [[ "$1" == --*=* ]]; then
+                REGION="${1#*=}"
+                shift
+            elif [[ -z "${2:-}" || "$2" == --* ]]; then
+                error "Option --region requires a value"
+                exit 1
             else
-                new_args+=("$arg")
-            fi
-        done
-        printf '%s\n' "${new_args[@]}"
-    fi
-}
-
-set -- $(preprocess_args "$@")
-
-parse_args() {
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --region|-r)
-                if [[ "$1" == --*=* ]]; then
-                    REGION="${1#*=}"
-                elif [[ -z "${2:-}" || "$2" == --* ]]; then
-                    error "Option --region requires a value"
-                    exit 1
-                else
-                    REGION="$2"
-                fi
+                REGION="$2"
                 shift 2
-                ;;
-        --profile|-p)
+            fi
+            ;;
+        --profile|--profile=*|-p|-p=*)
             if [[ "$1" == --*=* ]]; then
                 PROFILES+=("${1#*=}")
+                shift
             elif [[ -z "${2:-}" || "$2" == --* ]]; then
                 error "Option --profile requires a value"
                 exit 1
             else
                 PROFILES+=("$2")
+                shift 2
             fi
-            shift 2
+            ;;
+        --output|--output=*|-o|-o=*)
+            if [[ "$1" == --*=* ]]; then
+                OUTPUT="${1#*=}"
+                shift
+            elif [[ -z "${2:-}" || "$2" == --* ]]; then
+                error "Option --output requires a value"
+                exit 1
+            else
+                OUTPUT="$2"
+                shift 2
+            fi
+            ;;
+        --profile|-p)
+            if [[ "$1" == --*=* ]]; then
+                PROFILES+=("${1#*=}")
+                shift
+            elif [[ -z "${2:-}" || "$2" == --* ]]; then
+                error "Option --profile requires a value"
+                exit 1
+            else
+                PROFILES+=("$2")
+                shift 2
+            fi
             ;;
         --profiles)
             if [[ -z "${2:-}" || "$2" == --* ]]; then
@@ -169,13 +179,14 @@ parse_args() {
         --output|-o)
             if [[ "$1" == --*=* ]]; then
                 OUTPUT="${1#*=}"
+                shift
             elif [[ -z "${2:-}" || "$2" == --* ]]; then
                 error "Option --output requires a value"
                 exit 1
             else
                 OUTPUT="$2"
+                shift 2
             fi
-            shift 2
             ;;
         --help|-h)
             usage
@@ -187,28 +198,28 @@ parse_args() {
             exit 1
             ;;
     esac
-    done
-}
-
-parse_args "$@"
+done
 
 if [[ "$OUTPUT" != "text" && "$OUTPUT" != "table" ]]; then
     error "Invalid output format: $OUTPUT. Must be 'text' or 'table'"
     exit 1
 fi
 
+# If no profiles provided, check AWS_PROFILE env var
 if [[ ${#PROFILES[@]} -eq 0 ]]; then
-    PROFILES+=("")
+    if [[ -n "${AWS_PROFILE:-}" ]]; then
+        PROFILES+=("$AWS_PROFILE")
+    else
+        PROFILES+=("")  # Empty string means "current auth context"
+    fi
 fi
 
 list_resources() {
     local profile="$1"
     local target_region="$2"
     
-    local aws_profile_env=""
-    if [[ -n "$profile" ]]; then
-        aws_profile_env="AWS_PROFILE=$profile"
-    fi
+    local profile_arg=""
+    [[ -n "$profile" ]] && profile_arg="--profile $profile"
     
     local arns=()
     local pagination_token=""
@@ -218,20 +229,13 @@ list_resources() {
         page_count=$((page_count + 1))
         
         local response
+        local aws_cmd="aws resourcegroupstaggingapi get-resources $profile_arg --region $target_region --output json --no-cli-pager"
+        
         if [[ -n "$pagination_token" ]]; then
-            response=$(eval "$aws_profile_env" aws resourcegroupstaggingapi get-resources \
-                --region "$target_region" \
-                --pagination-token "$pagination_token" \
-                --output json \
-                --no-cli-pager 2>&1)
-        else
-            response=$(eval "$aws_profile_env" aws resourcegroupstaggingapi get-resources \
-                --region "$target_region" \
-                --output json \
-                --no-cli-pager 2>&1)
+            aws_cmd="$aws_cmd --pagination-token $pagination_token"
         fi
         
-        if [[ $? -ne 0 ]] || [[ "$response" == *"Error"* ]]; then
+        if ! response=$($aws_cmd 2>&1); then
             error "Failed to retrieve resources from AWS"
             error "Response: $response"
             return 1
@@ -254,7 +258,6 @@ list_resources() {
     done
     
     printf '%s\n' "${arns[@]}"
-    echo "$page_count"
 }
 
 save_report() {
@@ -264,10 +267,13 @@ save_report() {
     local resources="$4"
     
     local dir_name
+    local profile_name
     if [[ -n "$profile" ]]; then
+        profile_name="$profile"
         dir_name="$REPORT_DIR/$profile"
     else
-        dir_name="$REPORT_DIR/default"
+        profile_name="${AWS_PROFILE:-current}"
+        dir_name="$REPORT_DIR/$profile_name"
     fi
     
     mkdir -p "$dir_name"
@@ -275,19 +281,10 @@ save_report() {
     local output_file="$dir_name/resources.txt"
     echo "$resources" > "$output_file"
     
-    local timestamp
-    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    
     local resource_count
     resource_count=$(echo "$resources" | grep -c . || echo "0")
     
-    cat << EOF
-profile=$profile
-account=$account
-region=$target_region
-resource_count=$resource_count
-output_file=$output_file
-EOF
+    echo "profile=$profile_name account=$account region=$target_region resource_count=$resource_count output_file=$output_file"
 }
 
 generate_summary() {
@@ -298,7 +295,6 @@ generate_summary() {
     echo "{"
     echo "  \"generated_at\": \"$timestamp\","
     echo "  \"report_dir\": \"$REPORT_DIR\","
-    echo "  \"region\": \"$REGION\","
     echo "  \"profiles\": ["
     
     local first=true
@@ -314,9 +310,14 @@ generate_summary() {
             while IFS='=' read -r key value; do
                 [[ -z "$key" ]] && continue
                 if [[ "$key" == "resource_count" || "$key" == "account" ]]; then
-                    echo -n "      \"$key\": $value, "
+                    echo -n "      \"$key\": $value"
                 else
-                    echo -n "      \"$key\": \"$value\", "
+                    echo -n "      \"$key\": \"$value\""
+                fi
+                
+                # Add comma unless it's the last field
+                if [[ "$key" != "output_file" ]]; then
+                    echo ","
                 fi
             done <<< "$summary"
             
@@ -333,63 +334,47 @@ main() {
     check_dependencies
     
     local summaries=()
-    local all_resources=""
-    local failed_profiles=()
     
     for profile in "${PROFILES[@]}"; do
-        local account region
-        local account_info
+        local account region target_region
         
-        # Get account info - exit on failure
-        if ! account_info=$(get_account_info "$profile"); then
-            failed_profiles+=("$profile")
-            continue
+        # Validate auth - exit on failure
+        if ! account=$(validate_auth "$profile"); then
+            exit 1
         fi
         
-        account=$(echo "$account_info" | cut -d'|' -f1)
-        region=$(echo "$account_info" | cut -d'|' -f2)
+        # Get region from profile or use --region override
+        region=$(get_profile_region "$profile")
+        target_region="${REGION:-$region}"
         
-        # Use --region override if provided, otherwise use profile's region
-        local target_region="${REGION:-$region}"
-        
+        # Fail if no region available
         if [[ -z "$target_region" ]]; then
-            error "No region available for profile '${profile:-default}'. Use --region or configure region in profile."
-            failed_profiles+=("$profile")
-            continue
-        fi
-        
-        local result
-        if ! result=$(list_resources "$profile" "$target_region"); then
-            failed_profiles+=("$profile")
-            continue
+            local display_profile="${profile:-${AWS_PROFILE:-current}}"
+            error "No region configured for profile '$display_profile'. Use --region flag."
+            exit 1
         fi
         
         local resources
-        local page_count
-        resources=$(echo "$result" | head -n -1)
-        page_count=$(echo "$result" | tail -n 1)
+        if ! resources=$(list_resources "$profile" "$target_region"); then
+            exit 1
+        fi
         
         local resource_count
         resource_count=$(echo "$resources" | grep -c . || echo "0")
+        
+        local display_profile="${profile:-${AWS_PROFILE:-current}}"
         
         if [[ "$REPORT" == true ]]; then
             local summary
             summary=$(save_report "$profile" "$account" "$target_region" "$resources")
             summaries+=("$summary")
-            echo "profile=$profile account=$account region=$target_region resource_count=$resource_count saved_to=$REPORT_DIR/$profile/resources.txt"
+            echo "profile=$display_profile account=$account region=$target_region resource_count=$resource_count saved_to=$REPORT_DIR/$display_profile/resources.txt"
         else
-            echo "profile=$profile account=$account region=$target_region resource_count=$resource_count"
+            echo "profile=$display_profile account=$account region=$target_region resource_count=$resource_count"
             echo ""
             echo "$resources"
         fi
     done
-    
-    # Report any failures
-    if [[ ${#failed_profiles[@]} -gt 0 ]]; then
-        echo ""
-        error "Failed profiles: ${failed_profiles[*]}"
-        exit 1
-    fi
     
     if [[ "$REPORT" == true && ${#summaries[@]} -gt 0 ]]; then
         echo ""
