@@ -1,5 +1,5 @@
 [tools]
-steampipe = "latest"
+steampipe = { version = "latest", os = ["linux"] }
 
 [tasks.mise-tools]
 description = "List mise tools installed in current directory"
