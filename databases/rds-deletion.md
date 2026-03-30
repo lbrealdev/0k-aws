@@ -1,54 +1,12 @@
 # RDS Instance Deletion
 
-Deleting an RDS instance is a permanent action. Once deleted, the instance and its automated backups are gone. This document covers the considerations you should take before proceeding with the deletion of an RDS instance.
+Deleting an RDS instance is a permanent action. Once deleted, the instance and its automated backups are gone. This document covers the considerations you should take before proceeding with the deletion of a manually-created RDS instance.
 
 ## Pre-Deletion Checklist
 
-Verify the instance is not in use by checking active connections and application configurations:
-```shell
-aws rds describe-db-instances --db-instance-identifier <INSTANCE_ID> \
-  --query 'DBInstances[0].DBInstanceStatus'
-```
-
-Check if the instance is managed by infrastructure-as-code (CloudFormation, Terraform, CDK). If so, delete it through the IaC tool instead of manually:
-```shell
-# CloudFormation
-aws cloudformation list-stack-resources --stack-name <STACK_NAME>
-
-# Terraform
-terraform state list | grep rds
-```
-
-Check for read replicas. These must be deleted before the primary instance. Note that read replicas require `--skip-final-snapshot` when deleting:
-```shell
-aws rds describe-db-instances --db-instance-identifier <INSTANCE_ID> \
-  --query 'DBInstances[0].ReadReplicaDBInstanceIdentifiers'
-```
-
-Check if deletion protection is enabled and disable it if needed:
-```shell
-# Check
-aws rds describe-db-instances --db-instance-identifier <INSTANCE_ID> \
-  --query 'DBInstances[0].DeletionProtection'
-
-# Disable
-aws rds modify-db-instance --db-instance-identifier <INSTANCE_ID> \
-  --no-deletion-protection --apply-immediately
-```
-
-Confirm the instance was not created from a snapshot (useful to know for rollback purposes):
-```shell
-aws rds describe-db-instances --db-instance-identifier <INSTANCE_ID> \
-  --query 'DBInstances[0].SnapshotIdentifier'
-```
-
-Check if the instance is in a failure state. Instances with status `failed`, `incompatible-restore`, or `incompatible-network` can only be deleted with `--skip-final-snapshot` (no final snapshot will be created):
-```shell
-aws rds describe-db-instances --db-instance-identifier <INSTANCE_ID> \
-  --query 'DBInstances[0].DBInstanceStatus'
-```
-
-Verify there are no dependent resources such as applications, Lambda functions, CloudWatch alarms, or DNS records pointing to the instance endpoint.
+- Check for read replicas — these must be deleted before the primary instance and require `--skip-final-snapshot`
+- Disable deletion protection if enabled
+- Check if the instance is in a failure state (`failed`, `incompatible-restore`, or `incompatible-network`) — can only delete with `--skip-final-snapshot`
 
 ## Snapshots
 
@@ -101,6 +59,24 @@ aws rds wait db-snapshot-available --db-snapshot-identifier <SNAPSHOT_NAME>
 Manual snapshots persist indefinitely and incur storage costs. Set a reminder to delete them when no longer needed:
 ```shell
 aws rds delete-db-snapshot --db-snapshot-identifier <SNAPSHOT_NAME>
+```
+
+## Deletion
+
+With a final snapshot (default):
+```shell
+aws rds delete-db-instance \
+  --db-instance-identifier <INSTANCE_ID> \
+  --final-db-snapshot-identifier <SNAPSHOT_NAME> \
+  --delete-automated-backups
+```
+
+Without a final snapshot (only for failure states or read replicas):
+```shell
+aws rds delete-db-instance \
+  --db-instance-identifier <INSTANCE_ID> \
+  --skip-final-snapshot \
+  --delete-automated-backups
 ```
 
 ## Other Important Observations
