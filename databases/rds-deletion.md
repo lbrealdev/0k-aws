@@ -87,3 +87,9 @@ aws rds delete-db-instance \
 - **Multi-AZ instances** remove both the primary and standby when deleted.
 - **Review manual snapshot storage costs** periodically to avoid unexpected charges from forgotten snapshots.
 - **RDS Custom instances** — deleting an RDS Custom instance permanently deletes the underlying EC2 instance and associated EBS volumes. Do not terminate or delete these resources separately before deleting the RDS instance, as it may cause the deletion and final snapshot creation to fail. Read replicas and RDS Custom instances require `--skip-final-snapshot`.
+
+## References
+
+- [AWS CLI RDS Reference](https://docs.aws.amazon.com/cli/latest/reference/rds/)
+- [delete-db-instance](https://docs.aws.amazon.com/cli/latest/reference/rds/delete-db-instance.html)
+- [Deleting a DB Instance](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_DeleteInstance.html)
