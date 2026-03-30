@@ -85,9 +85,5 @@ aws rds delete-db-instance \
 - **Associated resources are not automatically deleted.** Subnet groups, parameter groups, and security groups must be cleaned up separately.
 - **CloudWatch logs and metrics are not deleted with the instance.** These persist and continue to incur costs if not addressed.
 - **Multi-AZ instances** remove both the primary and standby when deleted.
-- **Consider stopping the instance first** to save on compute costs without committing to full deletion. A stopped instance can be restarted within 7 days (after that, it is automatically started by RDS).
-  ```shell
-  aws rds stop-db-instance --db-instance-identifier <INSTANCE_ID>
-  ```
 - **Review manual snapshot storage costs** periodically to avoid unexpected charges from forgotten snapshots.
 - **RDS Custom instances** — deleting an RDS Custom instance permanently deletes the underlying EC2 instance and associated EBS volumes. Do not terminate or delete these resources separately before deleting the RDS instance, as it may cause the deletion and final snapshot creation to fail. Read replicas and RDS Custom instances require `--skip-final-snapshot`.
