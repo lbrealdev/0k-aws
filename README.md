@@ -24,6 +24,9 @@ A personal wiki of AWS knowledge. CLI commands, practical tips, and lessons lear
   - [STS](./cli/sts.md)
   - [SSO](./cli/sso.md)
   - [Login](./cli/login.md)
+- [Databases](#databases)
+  - [Overview](./databases/README.md)
+  - [RDS Deletion](./databases/rds-deletion.md)
 - [AWS Developer Tools](#aws-developer-tools)
   - [Overview](./developer-tools/README.md)
   - [CodeCommit](./developer-tools/codecommit/README.md)
@@ -35,6 +38,16 @@ A personal wiki of AWS knowledge. CLI commands, practical tips, and lessons lear
 ## CLI
 
 AWS CLI commands for various AWS services.
+
+---
+
+## Databases
+
+Operational guides for AWS database services.
+
+See [databases/README.md](./databases/README.md) for the section index.
+
+- [RDS Deletion](./databases/rds-deletion.md) — considerations and checklist for deleting an RDS instance.
 
 ---
 
