@@ -25,7 +25,9 @@ This guide covers what to inventory, how backups relate to each other, and a pra
 
 ## Pre-elimination inventory
 
-Use the helper script with the instance IDs you are eliminating. It correlates leftover volumes, snapshots, AMIs, and AWS Backup recovery points by instance/volume IDs and tags (works for terminated instances when leftovers remain):
+Use the helper script with the instance IDs you are eliminating. It correlates leftover volumes, snapshots, AMIs, and AWS Backup recovery points by instance/volume IDs and tags (works for terminated instances when leftovers remain).
+
+For AWS Backup, the script uses `list-recovery-points-by-resource` against the instance ARN and each discovered volume ARN (not a full vault scan).
 
 ```shell
 ./scripts/ec2-backup-inventory.sh -i <INSTANCE_ID> --region <REGION>
@@ -109,6 +111,8 @@ aws dlm get-lifecycle-policy --policy-id <POLICY_ID>
 ```
 
 ### 6. AWS Backup (EC2 / EBS)
+
+The inventory script discovers recovery points with `list-recovery-points-by-resource` for known instance/volume ARNs. For manual checks, you can still list vaults and recovery points:
 
 List vaults and recovery points (resource ARNs contain `ec2` or `ebs`):
 
@@ -223,10 +227,13 @@ Repeat for a sample of EC2/EBS recovery points and look for a common key/value. 
 | `list-tags` shows a common key + stable value on recovery points | A tag-based filter flag may be worth adding later |
 | Tags empty, inconsistent, or only on the source instance/volume | Do not add a tag filter; prefer ARN-based discovery |
 
-Preferred discovery order once implemented:
+Script default path:
 
-1. Default: `list-recovery-points-by-resource` for the instance ARN and each volume ARN (fast, no tag assumptions)
+1. [`scripts/ec2-backup-inventory.sh`](../scripts/ec2-backup-inventory.sh) uses `list-recovery-points-by-resource` for the instance ARN and each volume ARN (fast, no vault scan, no tag assumptions)
 2. Optional later: a tag-based approach **only if** step 4 confirms a useful recovery-point tag
+
+Manual vault inspection above remains useful for exploration; it is not how the helper discovers recovery points.
+
 ## Snapshots vs AMIs vs AWS Backup vs DLM
 
 These are related but not interchangeable:

@@ -501,6 +501,32 @@ collect_amis_for_instance() {
     printf '%s' "$result"
 }
 
+query_backup_recovery_points_by_arn() {
+    local resource_arn="$1"
+    local instance_id="$2"
+    local points normalized
+
+    if ! points=$(aws_json_quiet backup list-recovery-points-by-resource \
+        --resource-arn "$resource_arn"); then
+        return 1
+    fi
+
+    normalized="$(printf '%s' "$points" | jq -c --arg iid "$instance_id" '
+      [.RecoveryPoints[]? | {
+        vaultName: (.BackupVaultName // null),
+        recoveryPointArn: .RecoveryPointArn,
+        resourceArn: (.ResourceArn // null),
+        resourceType: (.ResourceType // null),
+        creationDate: (.CreationDate // null),
+        completionDate: (.CompletionDate // null),
+        status: (.Status // null),
+        instanceId: $iid,
+        tags: {}
+      }]
+    ')"
+    printf '%s' "$normalized"
+}
+
 collect_backup_for_instance() {
     local instance_id="$1"
     local volumes_json="$2"
@@ -511,68 +537,47 @@ collect_backup_for_instance() {
         return 0
     fi
 
-    local volume_ids vaults vault_names vault points combined start vault_start before_count after_count matched_count
+    local start combined volume_ids volume_id instance_arn volume_arn points count
     start="$(now_epoch)"
     info "  5/5 Discover AWS Backup recovery points..."
-    volume_ids="$(printf '%s' "$volumes_json" | jq -c '[.[].volumeId]')"
-
-    info "    Querying AWS Backup vaults..."
-    if ! vaults=$(aws_json_quiet backup list-backup-vaults); then
-        warning "Could not list AWS Backup vaults for $instance_id"
-        echo '[]'
-        return 0
-    fi
-
-    vault_names="$(printf '%s' "$vaults" | jq -r '.BackupVaultList[]?.BackupVaultName // empty' | sanitize_stream)"
     combined='[]'
-    info "    Backup vaults found: $(printf '%s' "$vaults" | jq '.BackupVaultList | length')"
 
-    if [[ -z "${vault_names//[[:space:]]/}" ]]; then
+    if [[ -z "$EFFECTIVE_REGION" || "$EFFECTIVE_REGION" == "not set" ]]; then
+        warning "AWS region is not set; cannot build resource ARNs for Backup discovery"
         info "  Backup recovery points found: 0 ($(elapsed_since "$start")s)"
         echo '[]'
         return 0
     fi
 
-    while IFS= read -r vault; do
-        vault="$(strip_cr "$vault")"
-        [[ -z "$vault" ]] && continue
-        vault_start="$(now_epoch)"
-        before_count="$(printf '%s' "$combined" | jq 'length')"
-        info "    Vault: $vault"
-        points="$(aws_json_quiet backup list-recovery-points-by-backup-vault \
-            --backup-vault-name "$vault" || echo '{"RecoveryPoints":[]}')"
-        info "    Vault $vault recovery points scanned: $(printf '%s' "$points" | jq '.RecoveryPoints | length')"
+    instance_arn="arn:aws:ec2:${EFFECTIVE_REGION}:${ACCOUNT_ID}:instance/${instance_id}"
+    info "    Querying instance ARN..."
+    if points=$(query_backup_recovery_points_by_arn "$instance_arn" "$instance_id"); then
+        count="$(printf '%s' "$points" | jq 'length')"
+        info "    Instance recovery points: $count"
+        combined="$(jq -n --argjson acc "$combined" --argjson page "$points" '$acc + $page')"
+    else
+        warning "Could not list Backup recovery points for instance $instance_id"
+    fi
 
-        combined="$(jq -n \
-            --argjson acc "$combined" \
-            --argjson page "$points" \
-            --arg iid "$instance_id" \
-            --argjson vids "$volume_ids" \
-            --arg vault "$vault" '
-            def matches($arn):
-              ($arn | contains($iid))
-              or any($vids[]; . as $vid | ($arn | contains($vid)));
+    volume_ids="$(printf '%s' "$volumes_json" | jq -r '.[].volumeId // empty' | sanitize_stream)"
+    while IFS= read -r volume_id; do
+        volume_id="$(strip_cr "$volume_id")"
+        [[ -z "$volume_id" ]] && continue
+        volume_arn="arn:aws:ec2:${EFFECTIVE_REGION}:${ACCOUNT_ID}:volume/${volume_id}"
+        info "    Querying volume $volume_id..."
+        if points=$(query_backup_recovery_points_by_arn "$volume_arn" "$instance_id"); then
+            count="$(printf '%s' "$points" | jq 'length')"
+            info "    Volume $volume_id recovery points: $count"
+            combined="$(jq -n --argjson acc "$combined" --argjson page "$points" '$acc + $page')"
+        else
+            warning "Could not list Backup recovery points for volume $volume_id"
+        fi
+    done <<< "$volume_ids"
 
-            $acc + [
-              ($page.RecoveryPoints // [])[]
-              | select(matches(.ResourceArn // ""))
-              | {
-                  vaultName: $vault,
-                  recoveryPointArn: .RecoveryPointArn,
-                  resourceArn: .ResourceArn,
-                  resourceType: (.ResourceType // null),
-                  creationDate: .CreationDate,
-                  completionDate: (.CompletionDate // null),
-                  status: .Status,
-                  instanceId: $iid,
-                  tags: {}
-                }
-            ]
-          ')"
-        after_count="$(printf '%s' "$combined" | jq 'length')"
-        matched_count="$((after_count - before_count))"
-        info "    Vault $vault matches: $matched_count ($(elapsed_since "$vault_start")s)"
-    done <<< "$vault_names"
+    combined="$(printf '%s' "$combined" | jq -c '
+      group_by(.recoveryPointArn)
+      | map(.[0])
+    ')"
 
     info "  Backup recovery points found: $(printf '%s' "$combined" | jq 'length') ($(elapsed_since "$start")s)"
     printf '%s' "$combined"
