@@ -129,6 +129,87 @@ aws backup list-backup-plans \
   --output table
 ```
 
+### Investigate recovery-point tags (before adding a tag filter)
+
+Do **not** assume a tag-based Backup filter will help. Investigate first: confirm whether recovery points share a common tag, whether that tag lives on the recovery point itself (not only on the source instance/volume), and whether values are stable.
+
+#### 1. List vaults
+
+```shell
+aws backup list-backup-vaults \
+  --query 'BackupVaultList[].BackupVaultName' \
+  --output table
+```
+
+#### 2. Inspect recovery points and tags in one vault
+
+```shell
+aws backup list-recovery-points-by-backup-vault \
+  --backup-vault-name <VAULT_NAME> \
+  --output json | jq '.RecoveryPoints[] | {
+    resourceArn: .ResourceArn,
+    resourceType: .ResourceType,
+    status: .Status,
+    created: .CreationDate,
+    tags: (.Tags // {})
+  }'
+```
+
+#### 3. Focus on EC2 / EBS recovery points
+
+```shell
+aws backup list-recovery-points-by-backup-vault \
+  --backup-vault-name <VAULT_NAME> \
+  --output json | jq '
+    .RecoveryPoints[]
+    | select((.ResourceArn // "") | test("ec2|ebs"))
+    | {resourceArn: .ResourceArn, tags: (.Tags // {})}
+  '
+```
+
+#### 4. List unique tag keys across those recovery points
+
+```shell
+aws backup list-recovery-points-by-backup-vault \
+  --backup-vault-name <VAULT_NAME> \
+  --output json | jq '
+    [.RecoveryPoints[]
+      | select((.ResourceArn // "") | test("ec2|ebs"))
+      | (.Tags // {}) | keys
+    ]
+    | flatten | unique
+  '
+```
+
+If you see one or two stable keys (for example `Backup`, `BackupPlan`, or `Schedule`), those are candidates for a future filter.
+
+#### 5. Check values for a candidate key
+
+Replace `Backup` with the key from step 4:
+
+```shell
+aws backup list-recovery-points-by-backup-vault \
+  --backup-vault-name <VAULT_NAME> \
+  --output json | jq -r '
+    .RecoveryPoints[]
+    | select((.ResourceArn // "") | test("ec2|ebs"))
+    | (.Tags // {})["Backup"] // empty
+  ' | sort -u
+```
+
+#### Decision rule
+
+| Finding | Action |
+|---------|--------|
+| Common key + stable value on **recovery points** | A tag-based filter flag is worth adding later |
+| Tag only on the source instance/volume | Do not add a tag filter; prefer ARN-based discovery |
+| No consistent tag / empty tags | Do not add a tag filter; prefer ARN-based discovery |
+
+Preferred discovery order once implemented:
+
+1. Default: `list-recovery-points-by-resource` for the instance ARN and each volume ARN (fast, no tag assumptions)
+2. Optional later: a tag-based vault filter **only if** this investigation confirms a useful recovery-point tag
+
 ## Snapshots vs AMIs vs AWS Backup vs DLM
 
 These are related but not interchangeable:
