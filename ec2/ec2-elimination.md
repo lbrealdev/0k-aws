@@ -129,9 +129,11 @@ aws backup list-backup-plans \
   --output table
 ```
 
-### Investigate recovery-point tags (before adding a tag filter)
+### Investigate recovery points (before adding a Backup filter)
 
-Do **not** assume a tag-based Backup filter will help. Investigate first: confirm whether recovery points share a common tag, whether that tag lives on the recovery point itself (not only on the source instance/volume), and whether values are stable.
+Do **not** assume a tag-based Backup filter will help. Start with what `list-recovery-points-by-backup-vault` actually returns.
+
+Important: that API does **not** include a `Tags` attribute on recovery points. See the [API reference](https://docs.aws.amazon.com/aws-backup/latest/APIReference/API_ListRecoveryPointsByBackupVault.html) and [CLI reference](https://docs.aws.amazon.com/cli/latest/reference/backup/list-recovery-points-by-backup-vault.html). Useful server-side filters include `--by-resource-arn`, `--by-resource-type`, and `--by-backup-plan-id`.
 
 #### 1. List vaults
 
@@ -141,7 +143,7 @@ aws backup list-backup-vaults \
   --output table
 ```
 
-#### 2. Inspect recovery points and tags in one vault
+#### 2. Inspect recovery points in one vault
 
 ```shell
 aws backup list-recovery-points-by-backup-vault \
@@ -152,65 +154,79 @@ aws backup list-recovery-points-by-backup-vault \
     resourceType: .ResourceType,
     status: .Status,
     created: .CreationDate,
-    tags: (.Tags // {})
+    backupPlanId: (.CreatedBy.BackupPlanId // null),
+    backupPlanName: (.CreatedBy.BackupPlanName // null)
   }'
 ```
 
 #### 3. Focus on EC2 / EBS recovery points
 
-```shell
-aws backup list-recovery-points-by-backup-vault \
-  --backup-vault-name <VAULT_NAME> \
-  --output json | jq '
-    .RecoveryPoints[]
-    | select((.ResourceArn // "") | test("ec2|ebs"))
-    | {resourceArn: .ResourceArn, tags: (.Tags // {})}
-  '
-```
-
-#### 4. List unique tag keys across those recovery points
+Prefer the API filter when possible:
 
 ```shell
 aws backup list-recovery-points-by-backup-vault \
   --backup-vault-name <VAULT_NAME> \
-  --output json | jq '
-    [.RecoveryPoints[]
-      | select((.ResourceArn // "") | test("ec2|ebs"))
-      | (.Tags // {}) | keys
-    ]
-    | flatten | unique
-  '
+  --by-resource-type EC2 \
+  --output json | jq '.RecoveryPoints[] | {
+    recoveryPointArn: .RecoveryPointArn,
+    resourceArn: .ResourceArn,
+    status: .Status,
+    created: .CreationDate,
+    backupPlanId: (.CreatedBy.BackupPlanId // null)
+  }'
 ```
-
-If you see one or two stable keys (for example `Backup`, `BackupPlan`, or `Schedule`), those are candidates for a future filter.
-
-#### 5. Check values for a candidate key
-
-Replace `Backup` with the key from step 4:
 
 ```shell
 aws backup list-recovery-points-by-backup-vault \
   --backup-vault-name <VAULT_NAME> \
-  --output json | jq -r '
-    .RecoveryPoints[]
-    | select((.ResourceArn // "") | test("ec2|ebs"))
-    | (.Tags // {})["Backup"] // empty
-  ' | sort -u
+  --by-resource-type EBS \
+  --output json | jq '.RecoveryPoints[] | {
+    recoveryPointArn: .RecoveryPointArn,
+    resourceArn: .ResourceArn,
+    status: .Status,
+    created: .CreationDate,
+    backupPlanId: (.CreatedBy.BackupPlanId // null)
+  }'
 ```
+
+Or target one known resource ARN:
+
+```shell
+aws backup list-recovery-points-by-backup-vault \
+  --backup-vault-name <VAULT_NAME> \
+  --by-resource-arn arn:aws:ec2:<REGION>:<ACCOUNT_ID>:instance/<INSTANCE_ID> \
+  --output json | jq '.RecoveryPoints[] | {
+    recoveryPointArn: .RecoveryPointArn,
+    resourceArn: .ResourceArn,
+    status: .Status,
+    created: .CreationDate
+  }'
+```
+
+#### 4. Optional: inspect tags on a single recovery point
+
+Tags are not returned by `list-recovery-points-by-backup-vault`. Fetch them per recovery point with `list-tags`:
+
+```shell
+aws backup list-tags \
+  --resource-arn <RECOVERY_POINT_ARN> \
+  --output json
+```
+
+Repeat for a sample of EC2/EBS recovery points and look for a common key/value. Only if that pattern is stable is a future tag-based filter worth considering.
 
 #### Decision rule
 
 | Finding | Action |
 |---------|--------|
-| Common key + stable value on **recovery points** | A tag-based filter flag is worth adding later |
-| Tag only on the source instance/volume | Do not add a tag filter; prefer ARN-based discovery |
-| No consistent tag / empty tags | Do not add a tag filter; prefer ARN-based discovery |
+| Recovery points are easy to target by resource ARN / resource type / backup plan ID | Prefer those filters; no tag flag needed |
+| `list-tags` shows a common key + stable value on recovery points | A tag-based filter flag may be worth adding later |
+| Tags empty, inconsistent, or only on the source instance/volume | Do not add a tag filter; prefer ARN-based discovery |
 
 Preferred discovery order once implemented:
 
 1. Default: `list-recovery-points-by-resource` for the instance ARN and each volume ARN (fast, no tag assumptions)
-2. Optional later: a tag-based vault filter **only if** this investigation confirms a useful recovery-point tag
-
+2. Optional later: a tag-based approach **only if** step 4 confirms a useful recovery-point tag
 ## Snapshots vs AMIs vs AWS Backup vs DLM
 
 These are related but not interchangeable:

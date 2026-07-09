@@ -5,7 +5,7 @@ Operational guides for Amazon EC2 elimination, backups, and related cleanup.
 ## Guides
 
 - [EC2 Elimination](./ec2-elimination.md) — inventory, snapshots, AMIs, backups, and checklist for removing EC2 resources safely
-  - Includes [Investigate recovery-point tags](./ec2-elimination.md#investigate-recovery-point-tags-before-adding-a-tag-filter) before adding any Backup tag filter
+  - Includes [Investigate recovery points](./ec2-elimination.md#investigate-recovery-points-before-adding-a-backup-filter) before adding any Backup filter
 
 ## Related CLI references
 
