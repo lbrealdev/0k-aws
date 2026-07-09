@@ -60,7 +60,7 @@ Operational guides for Amazon EC2 elimination, backups, and cleanup.
 
 See [ec2/README.md](./ec2/README.md) for the section index.
 
-- [EC2 Elimination](./ec2/ec2-elimination.md) — inventory snapshots, AMIs, DLM, and AWS Backup before removing EC2 resources.
+- [EC2 Elimination](./ec2/ec2-elimination.md) — instance-scoped inventory of volumes, snapshots, AMIs, DLM, and AWS Backup before removing EC2 resources.
 
 ---
 

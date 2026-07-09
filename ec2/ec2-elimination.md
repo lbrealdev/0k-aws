@@ -25,12 +25,15 @@ This guide covers what to inventory, how backups relate to each other, and a pra
 
 ## Pre-elimination inventory
 
-Use the helper script for a single-pass report:
+Use the helper script with the instance IDs you are eliminating. It correlates leftover volumes, snapshots, AMIs, and AWS Backup recovery points by instance/volume IDs and tags (works for terminated instances when leftovers remain):
 
 ```shell
-./scripts/ec2-backup-inventory.sh --region <REGION>
-./scripts/ec2-backup-inventory.sh --profile <PROFILE> --report
+./scripts/ec2-backup-inventory.sh -i <INSTANCE_ID> --region <REGION>
+./scripts/ec2-backup-inventory.sh -i <INSTANCE_ID_1>,<INSTANCE_ID_2> --profile <PROFILE> --format json
+./scripts/ec2-backup-inventory.sh -i <INSTANCE_ID_1> -i <INSTANCE_ID_2> --format csv --report
 ```
+
+Report files (with `--report`): `summary.json`, `instances.csv`, `volumes.csv`, `snapshots.csv`, `amis.csv`, `backup-recovery-points.csv`.
 
 Or gather the pieces manually with CLI (see also [`cli/ec2.md`](../cli/ec2.md), [`cli/ec2-snapshots.md`](../cli/ec2-snapshots.md), [`cli/ec2-ami.md`](../cli/ec2-ami.md)).
 
@@ -243,7 +246,7 @@ Manual snapshots persist until deleted and incur storage cost. Set a reminder to
 
 ## Related Scripts
 
-- [`scripts/ec2-backup-inventory.sh`](../scripts/ec2-backup-inventory.sh) — read-only inventory report for elimination planning
+- [`scripts/ec2-backup-inventory.sh`](../scripts/ec2-backup-inventory.sh) — instance-scoped read-only inventory (`--instance` required; `--format table|json|csv`; `--report`)
 
 ## References
 
