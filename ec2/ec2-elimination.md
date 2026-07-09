@@ -147,6 +147,7 @@ aws backup list-backup-vaults \
 aws backup list-recovery-points-by-backup-vault \
   --backup-vault-name <VAULT_NAME> \
   --output json | jq '.RecoveryPoints[] | {
+    recoveryPointArn: .RecoveryPointArn,
     resourceArn: .ResourceArn,
     resourceType: .ResourceType,
     status: .Status,
