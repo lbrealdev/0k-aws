@@ -152,9 +152,9 @@ usage() {
     cat << EOF
 Usage: $0 --instance <instance-id>[,<instance-id>...] [OPTIONS]
 
-Read-only, instance-scoped inventory for EC2 elimination:
+Read-only, instance-scoped inventory report for EC2 elimination:
   volumes (including leftovers), snapshots, AMIs, DLM policies, and AWS Backup recovery points.
-  Correlates related resources by instance/volume IDs and tags.
+  Correlates related resources by instance/volume IDs and tags, then writes a report.
 
 Required arguments:
   --instance, -i     One or more instance IDs (repeatable or comma-separated)
@@ -162,17 +162,16 @@ Required arguments:
 Optional arguments:
   --region, -r       AWS region
   --profile, -p      AWS profile name
-  --format, -f       Output format: table, json, or csv (default: table)
-  --report           Write summary.json and CSV files under a report directory
-  --report-dir       Custom report directory (implies --report)
-  --skip-backup      Skip AWS Backup vault/recovery-point enumeration
+  --format, -f       Report format: json or csv (default: json)
+  --report-dir       Custom report directory (default: report/ec2-backup-inventory-<timestamp>)
+  --skip-backup      Skip AWS Backup recovery-point enumeration
   --skip-dlm         Skip Data Lifecycle Manager policies
   --help, -h         Show this help message
 
 Examples:
   $0 -i i-0123456789abcdef0 --region us-east-1
-  $0 -i i-aaa,i-bbb --profile prod --format json
-  $0 -i i-aaa -i i-bbb --format csv --report
+  $0 -i i-aaa,i-bbb --profile prod -f json
+  $0 -i i-aaa -i i-bbb -f csv
   $0 -i i-aaa --skip-dlm --report-dir ./out/ec2-elim
 
 EOF
@@ -180,8 +179,7 @@ EOF
 
 PROFILE=""
 REGION=""
-FORMAT="table"
-REPORT=false
+FORMAT="json"
 REPORT_DIR=""
 SKIP_BACKUP=false
 SKIP_DLM=false
@@ -240,17 +238,12 @@ while [[ $# -gt 0 ]]; do
             FORMAT="$(strip_cr "$2" | tr '[:upper:]' '[:lower:]')"
             shift 2
             ;;
-        --report)
-            REPORT=true
-            shift
-            ;;
         --report-dir)
             if [[ -z "${2:-}" || "$2" == --* ]]; then
                 error "Option --report-dir requires a value"
                 exit 1
             fi
             REPORT_DIR="$(strip_cr "$2")"
-            REPORT=true
             shift 2
             ;;
         --skip-backup)
@@ -298,9 +291,9 @@ dedupe_instances() {
 dedupe_instances
 
 case "$FORMAT" in
-    table|json|csv) ;;
+    json|csv) ;;
     *)
-        error "Invalid format: $FORMAT (expected table, json, or csv)"
+        error "Invalid format: $FORMAT (expected json or csv)"
         exit 1
         ;;
 esac
@@ -754,61 +747,12 @@ build_summary() {
         }'
 }
 
-print_table() {
+write_json_report() {
     local summary="$1"
-    printf '%s' "$summary" | jq -r '
-      def tags_flat:
-        to_entries | map("\(.key)=\(.value)") | join("; ");
+    local dir="$2"
 
-      "Account: \(.accountId)",
-      "Region:  \(.region)",
-      "Platform:\(.platform)",
-      "",
-      (
-        .instances[] |
-        (
-          "══════════════════════════════════════════════════════════",
-          " Instance: \(.instanceId)",
-          "══════════════════════════════════════════════════════════",
-          "  found:   \(.found)",
-          "  state:   \(.state // "n/a")",
-          "  type:    \(.instanceType // "n/a")",
-          "  az:      \(.availabilityZone // "n/a")",
-          "  launch:  \(.launchTime // "n/a")",
-          "  tags:    \(.tags | tags_flat)",
-          (if (.notes | length) > 0 then "  notes:   \(.notes | join("; "))" else empty end),
-          "",
-          "  Volumes (\(.volumes | length)):",
-          (if (.volumes | length) == 0 then "    (none)"
-           else .volumes[] |
-             "    - \(.volumeId) size=\(.size)GiB state=\(.state) leftover=\(.leftover) deleteOnTermination=\(.deleteOnTermination // "n/a") device=\(.device // "n/a") tags=\(.tags | tags_flat) match=\(.matchReason | join(","))"
-           end),
-          "",
-          "  Snapshots (\(.snapshots | length)):",
-          (if (.snapshots | length) == 0 then "    (none)"
-           else .snapshots[] |
-             "    - \(.snapshotId) volume=\(.volumeId // "n/a") state=\(.state) start=\(.startTime) size=\(.volumeSize)GiB tags=\(.tags | tags_flat) match=\(.matchReason | join(","))"
-           end),
-          "",
-          "  AMIs (\(.amis | length)):",
-          (if (.amis | length) == 0 then "    (none)"
-           else .amis[] |
-             "    - \(.imageId) name=\(.name // "n/a") state=\(.state) created=\(.creationDate) snapshots=\(.snapshotIds | join(",")) tags=\(.tags | tags_flat) match=\(.matchReason | join(","))"
-           end),
-          "",
-          "  AWS Backup recovery points (\(.backupRecoveryPoints | length)):",
-          (if (.backupRecoveryPoints | length) == 0 then "    (none)"
-           else .backupRecoveryPoints[] |
-             "    - vault=\(.vaultName) status=\(.status) created=\(.creationDate) resource=\(.resourceArn)"
-           end),
-          ""
-        )
-      ),
-      "DLM policies (\(.dlmPolicies | length)):",
-      (if (.dlmPolicies | length) == 0 then "  (none or skipped)"
-       else .dlmPolicies[] | "  - \(.policyId) state=\(.state) type=\(.policyType // "n/a") desc=\(.description // "")"
-       end)
-    '
+    printf '%s\n' "$(printf '%s' "$summary" | jq '.')" > "$dir/summary.json"
+    info "Wrote $dir/summary.json"
 }
 
 write_csv_reports() {
@@ -897,95 +841,34 @@ write_csv_reports() {
     info "Wrote $dir/backup-recovery-points.csv"
 }
 
-print_csv_stdout() {
+print_completion_summary() {
     local summary="$1"
-    echo "# instances.csv"
-    printf '%s' "$summary" | jq -r '
-      ["instanceId","found","state","instanceType","availabilityZone","launchTime","tags"],
-      (.instances[] | [
-        .instanceId,
-        (.found|tostring),
-        (.state // ""),
-        (.instanceType // ""),
-        (.availabilityZone // ""),
-        (.launchTime // ""),
-        (.tags | to_entries | map("\(.key)=\(.value)") | join(";"))
-      ]) | @csv
-    '
-    echo ""
-    echo "# volumes.csv"
-    printf '%s' "$summary" | jq -r '
-      ["instanceId","volumeId","size","volumeType","state","availabilityZone","createTime","device","deleteOnTermination","leftover","matchReason","tags"],
-      (.instances[] | .instanceId as $iid | .volumes[] | [
-        $iid,
-        .volumeId,
-        (.size|tostring),
-        (.volumeType // ""),
-        (.state // ""),
-        (.availabilityZone // ""),
-        (.createTime // ""),
-        (.device // ""),
-        (.deleteOnTermination // "" | tostring),
-        (.leftover|tostring),
-        (.matchReason | join("|")),
-        (.tags | to_entries | map("\(.key)=\(.value)") | join(";"))
-      ]) | @csv
-    '
-    echo ""
-    echo "# snapshots.csv"
-    printf '%s' "$summary" | jq -r '
-      ["instanceId","snapshotId","volumeId","state","startTime","volumeSize","description","matchReason","tags"],
-      (.instances[] | .instanceId as $iid | .snapshots[] | [
-        $iid,
-        .snapshotId,
-        (.volumeId // ""),
-        (.state // ""),
-        (.startTime // ""),
-        (.volumeSize|tostring),
-        (.description // ""),
-        (.matchReason | join("|")),
-        (.tags | to_entries | map("\(.key)=\(.value)") | join(";"))
-      ]) | @csv
-    '
-    echo ""
-    echo "# amis.csv"
-    printf '%s' "$summary" | jq -r '
-      ["instanceId","imageId","name","state","creationDate","rootDeviceType","snapshotIds","matchReason","tags"],
-      (.instances[] | .instanceId as $iid | .amis[] | [
-        $iid,
-        .imageId,
-        (.name // ""),
-        (.state // ""),
-        (.creationDate // ""),
-        (.rootDeviceType // ""),
-        (.snapshotIds | join("|")),
-        (.matchReason | join("|")),
-        (.tags | to_entries | map("\(.key)=\(.value)") | join(";"))
-      ]) | @csv
-    '
-    echo ""
-    echo "# backup-recovery-points.csv"
-    printf '%s' "$summary" | jq -r '
-      ["instanceId","vaultName","recoveryPointArn","resourceArn","resourceType","creationDate","completionDate","status"],
-      (.instances[] | .instanceId as $iid | .backupRecoveryPoints[] | [
-        $iid,
-        .vaultName,
-        .recoveryPointArn,
-        .resourceArn,
-        (.resourceType // ""),
-        (.creationDate // ""),
-        (.completionDate // ""),
-        (.status // "")
-      ]) | @csv
-    '
+    local counts
+
+    counts="$(printf '%s' "$summary" | jq -r '
+      [
+        ((.instances | length) | tostring) + " instance" + (if (.instances | length) == 1 then "" else "s" end),
+        (([.instances[].volumes[]] | length) | tostring) + " volume" + (if ([.instances[].volumes[]] | length) == 1 then "" else "s" end),
+        (([.instances[].snapshots[]] | length) | tostring) + " snapshot" + (if ([.instances[].snapshots[]] | length) == 1 then "" else "s" end),
+        (([.instances[].amis[]] | length) | tostring) + " AMI" + (if ([.instances[].amis[]] | length) == 1 then "" else "s" end),
+        (([.instances[].backupRecoveryPoints[]] | length) | tostring) + " recovery point" + (if ([.instances[].backupRecoveryPoints[]] | length) == 1 then "" else "s" end),
+        ((.dlmPolicies | length) | tostring) + " DLM polic" + (if (.dlmPolicies | length) == 1 then "y" else "ies" end)
+      ] | join(", ")
+    ')"
+
+    success "Inventory complete (read-only; no changes were made)"
+    info "Report saved to: $REPORT_PATH"
+    info "Format: $(printf '%s' "$FORMAT" | tr '[:lower:]' '[:upper:]')"
+    info "Resources: $counts"
+    info "See ec2/ec2-elimination.md for the elimination checklist"
 }
 
 print_banner() {
-    echo ""
-    echo "╔════════════════════════════════════════════════════════╗"
-    echo "║     EC2 INSTANCE BACKUP / ELIMINATION INVENTORY        ║"
-    echo "╚════════════════════════════════════════════════════════╝"
-    echo ""
+    echo "" >&2
+    echo "╔════════════════════════════════════════════════════════╗" >&2
+    echo "║     EC2 INSTANCE BACKUP / ELIMINATION INVENTORY        ║" >&2
+    echo "╚════════════════════════════════════════════════════════╝" >&2
+    echo "" >&2
 }
 
 main() {
@@ -1004,44 +887,26 @@ main() {
     info "Instance IDs: ${INSTANCE_IDS[*]}"
     info "Format: $FORMAT"
 
-    if [[ "$REPORT" = true ]]; then
-        if [[ -z "$REPORT_DIR" ]]; then
-            REPORT_DIR="report/ec2-backup-inventory-$(date +%Y%m%d-%H%M%S)"
-        fi
-        REPORT_PATH="$REPORT_DIR"
-        mkdir -p "$REPORT_PATH"
-        info "Report directory: $REPORT_PATH"
+    if [[ -z "$REPORT_DIR" ]]; then
+        REPORT_DIR="report/ec2-backup-inventory-$(date +%Y%m%d-%H%M%S)"
     fi
+    REPORT_PATH="$REPORT_DIR"
+    mkdir -p "$REPORT_PATH"
+    info "Report directory: $REPORT_PATH"
 
     local summary
     summary="$(build_summary)"
 
-    if [[ "$REPORT" = true ]]; then
-        printf '%s\n' "$(printf '%s' "$summary" | jq '.')" > "$REPORT_PATH/summary.json"
-        info "Wrote $REPORT_PATH/summary.json"
-        write_csv_reports "$summary" "$REPORT_PATH"
-    fi
-
     case "$FORMAT" in
-        table)
-            print_table "$summary"
-            ;;
         json)
-            printf '%s\n' "$(printf '%s' "$summary" | jq '.')"
+            write_json_report "$summary" "$REPORT_PATH"
             ;;
         csv)
-            if [[ "$REPORT" = true ]]; then
-                info "CSV files written under $REPORT_PATH (stdout suppressed to avoid duplication)"
-            else
-                print_csv_stdout "$summary"
-            fi
+            write_csv_reports "$summary" "$REPORT_PATH"
             ;;
     esac
 
-    echo ""
-    success "Inventory complete (read-only; no changes were made)"
-    info "See ec2/ec2-elimination.md for the elimination checklist"
-    echo ""
+    print_completion_summary "$summary"
 }
 
 main "$@"

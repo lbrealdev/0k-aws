@@ -17,4 +17,4 @@ Operational guides for Amazon EC2 elimination, backups, and related cleanup.
 
 ## Related Scripts
 
-- [`scripts/ec2-backup-inventory.sh`](../scripts/ec2-backup-inventory.sh) — read-only, instance-scoped inventory (volumes, snapshots, AMIs, DLM, AWS Backup) with table/json/csv reports
+- [`scripts/ec2-backup-inventory.sh`](../scripts/ec2-backup-inventory.sh) — read-only, instance-scoped JSON/CSV report generator for volumes, snapshots, AMIs, DLM, and AWS Backup
