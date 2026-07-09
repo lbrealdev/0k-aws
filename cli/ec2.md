@@ -12,4 +12,4 @@ aws ec2 describe-instances \
 ## Related
 
 - [EC2 Elimination](../ec2/ec2-elimination.md) — inventory, backups, and termination checklist
-- [`scripts/ec2-backup-inventory.sh`](../scripts/ec2-backup-inventory.sh) — instance-scoped backup/elimination JSON/CSV report (`-i` required)
+- [`scripts/ec2-inventory.sh`](../scripts/ec2-inventory.sh) — instance-scoped backup/elimination JSON/CSV report (`-i` required)

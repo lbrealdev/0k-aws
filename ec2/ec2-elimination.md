@@ -30,12 +30,12 @@ Use the helper script with the instance IDs you are eliminating. It correlates l
 For AWS Backup, the script uses `list-recovery-points-by-resource` against the instance ARN and each discovered volume ARN (not a full vault scan).
 
 ```shell
-./scripts/ec2-backup-inventory.sh -i <INSTANCE_ID> --region <REGION>
-./scripts/ec2-backup-inventory.sh -i <INSTANCE_ID_1>,<INSTANCE_ID_2> --profile <PROFILE> -f json
-./scripts/ec2-backup-inventory.sh -i <INSTANCE_ID_1> -i <INSTANCE_ID_2> -f csv
+./scripts/ec2-inventory.sh -i <INSTANCE_ID> --region <REGION>
+./scripts/ec2-inventory.sh -i <INSTANCE_ID_1>,<INSTANCE_ID_2> --profile <PROFILE> -f json
+./scripts/ec2-inventory.sh -i <INSTANCE_ID_1> -i <INSTANCE_ID_2> -f csv
 ```
 
-The script always writes a report directory (`report/ec2-backup-inventory-<timestamp>/` by default):
+The script always writes a report directory (`report/ec2-inventory-<timestamp>/` by default):
 
 - `-f json` (default) → `summary.json`
 - `-f csv` → `instances.csv`, `volumes.csv`, `snapshots.csv`, `amis.csv`, `backup-recovery-points.csv`
@@ -232,7 +232,7 @@ Repeat for a sample of EC2/EBS recovery points and look for a common key/value. 
 
 Script default path:
 
-1. [`scripts/ec2-backup-inventory.sh`](../scripts/ec2-backup-inventory.sh) uses `list-recovery-points-by-resource` for the instance ARN and each volume ARN (fast, no vault scan, no tag assumptions)
+1. [`scripts/ec2-inventory.sh`](../scripts/ec2-inventory.sh) uses `list-recovery-points-by-resource` for the instance ARN and each volume ARN (fast, no vault scan, no tag assumptions)
 2. Optional later: a tag-based approach **only if** step 4 confirms a useful recovery-point tag
 
 Manual vault inspection above remains useful for exploration; it is not how the helper discovers recovery points.
@@ -354,7 +354,7 @@ Manual snapshots persist until deleted and incur storage cost. Set a reminder to
 
 ## Related Scripts
 
-- [`scripts/ec2-backup-inventory.sh`](../scripts/ec2-backup-inventory.sh) — instance-scoped JSON/CSV report generator (`--instance` required; `-f json|csv`)
+- [`scripts/ec2-inventory.sh`](../scripts/ec2-inventory.sh) — instance-scoped JSON/CSV report generator (`--instance` required; `-f json|csv`)
 
 ## References
 

@@ -69,7 +69,7 @@ cleanup_json_workspace() {
 }
 
 init_json_workspace() {
-    JSON_WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/ec2-backup-inventory.XXXXXX")"
+    JSON_WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/ec2-inventory.XXXXXX")"
     trap cleanup_json_workspace EXIT
 }
 
@@ -163,7 +163,7 @@ Optional arguments:
   --region, -r       AWS region
   --profile, -p      AWS profile name
   --format, -f       Report format: json or csv (default: json)
-  --report-dir       Custom report directory (default: report/ec2-backup-inventory-<timestamp>)
+  --report-dir       Custom report directory (default: report/ec2-inventory-<timestamp>)
   --skip-backup      Skip AWS Backup recovery-point enumeration
   --skip-dlm         Skip Data Lifecycle Manager policies
   --help, -h         Show this help message
@@ -888,7 +888,7 @@ main() {
     info "Format: $FORMAT"
 
     if [[ -z "$REPORT_DIR" ]]; then
-        REPORT_DIR="report/ec2-backup-inventory-$(date +%Y%m%d-%H%M%S)"
+        REPORT_DIR="report/ec2-inventory-$(date +%Y%m%d-%H%M%S)"
     fi
     REPORT_PATH="$REPORT_DIR"
     mkdir -p "$REPORT_PATH"
