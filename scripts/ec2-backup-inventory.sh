@@ -30,21 +30,34 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+timestamp() {
+    date '+%H:%M:%S'
+}
+
+now_epoch() {
+    date +%s
+}
+
+elapsed_since() {
+    local start="$1"
+    echo "$(($(now_epoch) - start))"
+}
+
 info() {
     # stderr so command substitutions / json|csv stdout stay clean
-    echo -e "${BLUE}[INFO]${NC} $1" >&2
+    echo -e "${BLUE}[$(timestamp)] [INFO]${NC} $1" >&2
 }
 
 success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1" >&2
+    echo -e "${GREEN}[$(timestamp)] [SUCCESS]${NC} $1" >&2
 }
 
 warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1" >&2
+    echo -e "${YELLOW}[$(timestamp)] [WARNING]${NC} $1" >&2
 }
 
 error() {
-    echo -e "${RED}[ERROR]${NC} $1" >&2
+    echo -e "${RED}[$(timestamp)] [ERROR]${NC} $1" >&2
 }
 
 check_dependencies() {
@@ -269,31 +282,49 @@ esac
 
 fetch_instance_json() {
     local instance_id="$1"
-    local raw
+    local raw start
+    start="$(now_epoch)"
+    info "  1/5 Describe instance..."
     if ! raw=$(aws_json_quiet ec2 describe-instances --instance-ids "$instance_id"); then
         # describe-instances fails for unknown/purged IDs
+        info "  Instance not returned by describe-instances ($(elapsed_since "$start")s)"
         echo "null"
         return 0
     fi
-    printf '%s' "$raw" | jq -c '.Reservations[0].Instances[0] // null'
+    local instance
+    instance="$(printf '%s' "$raw" | jq -c '.Reservations[0].Instances[0] // null')"
+    if [[ "$instance" == "null" ]]; then
+        info "  Instance not found in response ($(elapsed_since "$start")s)"
+    else
+        local state
+        state="$(printf '%s' "$instance" | jq -r '.State.Name // "unknown"')"
+        info "  Instance found: $state ($(elapsed_since "$start")s)"
+    fi
+    printf '%s' "$instance"
 }
 
 collect_volumes_for_instance() {
     local instance_id="$1"
     local instance_json="$2"
-    local volume_ids_json volumes_by_id tagged_volumes attached_volumes
+    local volume_ids_json volumes_by_id tagged_volumes attached_volumes start result
 
+    start="$(now_epoch)"
+    info "  2/5 Discover volumes..."
     volume_ids_json="$(printf '%s' "$instance_json" | jq -c '
       [.BlockDeviceMappings[]?.Ebs?.VolumeId // empty]
       | unique
     ')"
+    info "    BDM volume IDs: $(printf '%s' "$volume_ids_json" | jq -r 'if length == 0 then "(none)" else join(",") end')"
 
     # Volumes currently attached (or still showing attachment) to this instance
+    info "    Querying volumes by attachment filter..."
     attached_volumes="$(aws_json_quiet ec2 describe-volumes \
         --filters "Name=attachment.instance-id,Values=$instance_id" \
         | jq -c '.Volumes // []' || echo '[]')"
+    info "    Attachment-filter volumes: $(printf '%s' "$attached_volumes" | jq 'length')"
 
     # Tag discovery: volumes whose tag values mention the instance id
+    info "    Querying volumes by tag match..."
     tagged_volumes="$(aws_json_quiet ec2 describe-volumes \
         | jq -c --arg iid "$instance_id" '
           [.Volumes[]?
@@ -303,6 +334,7 @@ collect_volumes_for_instance() {
               )
           ]
         ' || echo '[]')"
+    info "    Tag-matched volumes: $(printf '%s' "$tagged_volumes" | jq 'length')"
 
     volumes_by_id='[]'
     if [[ "$volume_ids_json" != "[]" ]]; then
@@ -311,12 +343,14 @@ collect_volumes_for_instance() {
         if [[ -n "${ids//[[:space:]]/}" ]]; then
             # Intentionally unquoted expansion of volume ids for AWS CLI
             # shellcheck disable=SC2086
+            info "    Querying volumes by BDM IDs..."
             volumes_by_id="$(aws_json_quiet ec2 describe-volumes --volume-ids $ids \
                 | jq -c '.Volumes // []' || echo '[]')"
+            info "    BDM-described volumes: $(printf '%s' "$volumes_by_id" | jq 'length')"
         fi
     fi
 
-    jq -n \
+    result="$(jq -n \
         --arg iid "$instance_id" \
         --argjson from_bdm "$volumes_by_id" \
         --argjson attached "$attached_volumes" \
@@ -348,18 +382,26 @@ collect_volumes_for_instance() {
           })
         | map(. + {instanceId: $iid})
         '
+    )"
+    info "  Volumes found: $(printf '%s' "$result" | jq 'length') ($(elapsed_since "$start")s)"
+    printf '%s' "$result"
 }
 
 collect_snapshots_for_instance() {
     local instance_id="$1"
     local volumes_json="$2"
-    local volume_ids snaps
+    local volume_ids snaps start result
 
+    start="$(now_epoch)"
+    info "  3/5 Discover snapshots..."
     volume_ids="$(printf '%s' "$volumes_json" | jq -c '[.[].volumeId]')"
+    info "    Known volume IDs: $(printf '%s' "$volume_ids" | jq -r 'if length == 0 then "(none)" else join(",") end')"
 
+    info "    Querying account-owned snapshots..."
     snaps="$(aws_json_quiet ec2 describe-snapshots --owner-ids "$ACCOUNT_ID" || echo '{"Snapshots":[]}')"
+    info "    Account-owned snapshots scanned: $(printf '%s' "$snaps" | jq '.Snapshots | length')"
 
-    printf '%s' "$snaps" | jq -c --arg iid "$instance_id" --argjson vids "$volume_ids" '
+    result="$(printf '%s' "$snaps" | jq -c --arg iid "$instance_id" --argjson vids "$volume_ids" '
       def tag_obj:
         if . == null then {} else reduce .[] as $t ({}; . + {($t.Key): $t.Value}) end;
 
@@ -401,18 +443,25 @@ collect_snapshots_for_instance() {
             )
           }
       ]
-    '
+    ')"
+    info "  Snapshots found: $(printf '%s' "$result" | jq 'length') ($(elapsed_since "$start")s)"
+    printf '%s' "$result"
 }
 
 collect_amis_for_instance() {
     local instance_id="$1"
     local snapshots_json="$2"
-    local snapshot_ids images
+    local snapshot_ids images start result
 
+    start="$(now_epoch)"
+    info "  4/5 Discover AMIs..."
     snapshot_ids="$(printf '%s' "$snapshots_json" | jq -c '[.[].snapshotId]')"
+    info "    Known snapshot IDs: $(printf '%s' "$snapshot_ids" | jq -r 'if length == 0 then "(none)" else join(",") end')"
+    info "    Querying owned AMIs..."
     images="$(aws_json_quiet ec2 describe-images --owners "$ACCOUNT_ID" || echo '{"Images":[]}')"
+    info "    Owned AMIs scanned: $(printf '%s' "$images" | jq '.Images | length')"
 
-    printf '%s' "$images" | jq -c --arg iid "$instance_id" --argjson sids "$snapshot_ids" '
+    result="$(printf '%s' "$images" | jq -c --arg iid "$instance_id" --argjson sids "$snapshot_ids" '
       def tag_obj:
         if . == null then {} else reduce .[] as $t ({}; . + {($t.Key): $t.Value}) end;
 
@@ -447,7 +496,9 @@ collect_amis_for_instance() {
             )
           }
       ]
-    '
+    ')"
+    info "  AMIs found: $(printf '%s' "$result" | jq 'length') ($(elapsed_since "$start")s)"
+    printf '%s' "$result"
 }
 
 collect_backup_for_instance() {
@@ -455,13 +506,17 @@ collect_backup_for_instance() {
     local volumes_json="$2"
 
     if [[ "$SKIP_BACKUP" = true ]]; then
+        info "  5/5 Discover AWS Backup recovery points... skipped (--skip-backup)"
         echo '[]'
         return 0
     fi
 
-    local volume_ids vaults vault_names vault points combined
+    local volume_ids vaults vault_names vault points combined start vault_start before_count after_count matched_count
+    start="$(now_epoch)"
+    info "  5/5 Discover AWS Backup recovery points..."
     volume_ids="$(printf '%s' "$volumes_json" | jq -c '[.[].volumeId]')"
 
+    info "    Querying AWS Backup vaults..."
     if ! vaults=$(aws_json_quiet backup list-backup-vaults); then
         warning "Could not list AWS Backup vaults for $instance_id"
         echo '[]'
@@ -470,8 +525,10 @@ collect_backup_for_instance() {
 
     vault_names="$(printf '%s' "$vaults" | jq -r '.BackupVaultList[]?.BackupVaultName // empty' | sanitize_stream)"
     combined='[]'
+    info "    Backup vaults found: $(printf '%s' "$vaults" | jq '.BackupVaultList | length')"
 
     if [[ -z "${vault_names//[[:space:]]/}" ]]; then
+        info "  Backup recovery points found: 0 ($(elapsed_since "$start")s)"
         echo '[]'
         return 0
     fi
@@ -479,8 +536,12 @@ collect_backup_for_instance() {
     while IFS= read -r vault; do
         vault="$(strip_cr "$vault")"
         [[ -z "$vault" ]] && continue
+        vault_start="$(now_epoch)"
+        before_count="$(printf '%s' "$combined" | jq 'length')"
+        info "    Vault: $vault"
         points="$(aws_json_quiet backup list-recovery-points-by-backup-vault \
             --backup-vault-name "$vault" || echo '{"RecoveryPoints":[]}')"
+        info "    Vault $vault recovery points scanned: $(printf '%s' "$points" | jq '.RecoveryPoints | length')"
 
         combined="$(jq -n \
             --argjson acc "$combined" \
@@ -508,25 +569,32 @@ collect_backup_for_instance() {
                 }
             ]
           ')"
+        after_count="$(printf '%s' "$combined" | jq 'length')"
+        matched_count="$((after_count - before_count))"
+        info "    Vault $vault matches: $matched_count ($(elapsed_since "$vault_start")s)"
     done <<< "$vault_names"
 
+    info "  Backup recovery points found: $(printf '%s' "$combined" | jq 'length') ($(elapsed_since "$start")s)"
     printf '%s' "$combined"
 }
 
 collect_dlm_policies() {
     if [[ "$SKIP_DLM" = true ]]; then
+        info "DLM policies: skipped (--skip-dlm)"
         echo '[]'
         return 0
     fi
 
-    local policies
+    local policies result start
+    start="$(now_epoch)"
+    info "Collecting DLM lifecycle policies..."
     if ! policies=$(aws_json_quiet dlm get-lifecycle-policies); then
         warning "Could not list DLM policies (permissions or service unavailable)"
         echo '[]'
         return 0
     fi
 
-    printf '%s' "$policies" | jq -c '
+    result="$(printf '%s' "$policies" | jq -c '
       [.Policies[]? | {
         policyId: .PolicyId,
         description: (.Description // null),
@@ -534,13 +602,17 @@ collect_dlm_policies() {
         policyType: (.PolicyType // null),
         defaultPolicy: (.DefaultPolicy // null)
       }]
-    '
+    ')"
+    info "DLM policies found: $(printf '%s' "$result" | jq 'length') ($(elapsed_since "$start")s)"
+    printf '%s' "$result"
 }
 
 build_instance_record() {
     local instance_id="$1"
-    local instance_json volumes snapshots amis backups notes found_json
+    local instance_json volumes snapshots amis backups notes found_json start
 
+    start="$(now_epoch)"
+    info "Collecting resources for $instance_id"
     instance_json="$(fetch_instance_json "$instance_id")"
     notes='[]'
     found_json='true'
@@ -555,6 +627,7 @@ build_instance_record() {
     snapshots="$(collect_snapshots_for_instance "$instance_id" "$volumes")"
     amis="$(collect_amis_for_instance "$instance_id" "$snapshots")"
     backups="$(collect_backup_for_instance "$instance_id" "$volumes")"
+    info "Finished collecting resources for $instance_id ($(elapsed_since "$start")s)"
 
     jq -n \
         --argjson inst "$instance_json" \
@@ -589,7 +662,6 @@ build_summary() {
     local dlm records='[]' id record
 
     for id in "${INSTANCE_IDS[@]}"; do
-        info "Collecting resources for $id ..."
         record="$(build_instance_record "$id")"
         records="$(jq -n --argjson acc "$records" --argjson rec "$record" '$acc + [$rec]')"
     done
