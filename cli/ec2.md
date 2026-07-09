@@ -8,3 +8,8 @@ aws ec2 describe-instances \
   --query "reverse(sort_by(Reservations[*].Instances[].{ID:InstanceId,Type:InstanceType,Status:State.Name,Init:LaunchTime,EC2Name:Tags[?Key == 'Name'].Value | [0]} &Init))" \
   --output table
 ```
+
+## Related
+
+- [EC2 Elimination](../ec2/ec2-elimination.md) — inventory, backups, and termination checklist
+- [`scripts/ec2-inventory.sh`](../scripts/ec2-inventory.sh) — instance-scoped elimination JSON/CSV report (`-i` required)
