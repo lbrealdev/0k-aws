@@ -60,6 +60,31 @@ error() {
     echo -e "${RED}[$(timestamp)] [ERROR]${NC} $1" >&2
 }
 
+JSON_WORKSPACE=""
+
+cleanup_json_workspace() {
+    if [[ -n "$JSON_WORKSPACE" && -d "$JSON_WORKSPACE" ]]; then
+        rm -rf "$JSON_WORKSPACE"
+    fi
+}
+
+init_json_workspace() {
+    JSON_WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/ec2-backup-inventory.XXXXXX")"
+    trap cleanup_json_workspace EXIT
+}
+
+json_file_from_stdin() {
+    local prefix="$1"
+    local file
+    file="$(mktemp "$JSON_WORKSPACE/${prefix}.XXXXXX.json")"
+    sanitize_stream > "$file"
+    if ! jq empty "$file" 2>/dev/null; then
+        error "Invalid JSON generated for $prefix"
+        return 1
+    fi
+    printf '%s' "$file"
+}
+
 check_dependencies() {
     if ! command -v aws &> /dev/null; then
         error "aws-cli is not installed or not in PATH."
@@ -307,6 +332,7 @@ collect_volumes_for_instance() {
     local instance_id="$1"
     local instance_json="$2"
     local volume_ids_json volumes_by_id tagged_volumes attached_volumes start result
+    local volumes_by_id_file attached_file tagged_file
 
     start="$(now_epoch)"
     info "  2/5 Discover volumes..."
@@ -314,7 +340,7 @@ collect_volumes_for_instance() {
       [.BlockDeviceMappings[]?.Ebs?.VolumeId // empty]
       | unique
     ')"
-    info "    BDM volume IDs: $(printf '%s' "$volume_ids_json" | jq -r 'if length == 0 then "(none)" else join(",") end')"
+    info "    BDM volumes found: $(printf '%s' "$volume_ids_json" | jq 'length')"
 
     # Volumes currently attached (or still showing attachment) to this instance
     info "    Querying volumes by attachment filter..."
@@ -350,11 +376,15 @@ collect_volumes_for_instance() {
         fi
     fi
 
+    volumes_by_id_file="$(printf '%s' "$volumes_by_id" | json_file_from_stdin "volumes-bdm")"
+    attached_file="$(printf '%s' "$attached_volumes" | json_file_from_stdin "volumes-attached")"
+    tagged_file="$(printf '%s' "$tagged_volumes" | json_file_from_stdin "volumes-tagged")"
+
     result="$(jq -n \
         --arg iid "$instance_id" \
-        --argjson from_bdm "$volumes_by_id" \
-        --argjson attached "$attached_volumes" \
-        --argjson tagged "$tagged_volumes" \
+        --slurpfile from_bdm "$volumes_by_id_file" \
+        --slurpfile attached "$attached_file" \
+        --slurpfile tagged "$tagged_file" \
         '
         def norm:
           map({
@@ -373,9 +403,9 @@ collect_volumes_for_instance() {
             matchReason: []
           });
 
-        (($from_bdm | norm | map(.matchReason += ["block-device-mapping"]))
-         + ($attached | norm | map(.matchReason += ["attachment.instance-id"]))
-         + ($tagged | norm | map(.matchReason += ["tag-contains-instance-id"])))
+        (($from_bdm[0] | norm | map(.matchReason += ["block-device-mapping"]))
+         + ($attached[0] | norm | map(.matchReason += ["attachment.instance-id"]))
+         + ($tagged[0] | norm | map(.matchReason += ["tag-contains-instance-id"])))
         | group_by(.volumeId)
         | map(.[0] + {
             matchReason: (map(.matchReason[]) | unique)
@@ -390,18 +420,22 @@ collect_volumes_for_instance() {
 collect_snapshots_for_instance() {
     local instance_id="$1"
     local volumes_json="$2"
-    local volume_ids snaps start result
+    local volume_ids snaps start result volume_ids_file
 
     start="$(now_epoch)"
     info "  3/5 Discover snapshots..."
     volume_ids="$(printf '%s' "$volumes_json" | jq -c '[.[].volumeId]')"
-    info "    Known volume IDs: $(printf '%s' "$volume_ids" | jq -r 'if length == 0 then "(none)" else join(",") end')"
+    info "    Volumes available for matching: $(printf '%s' "$volume_ids" | jq 'length')"
+    volume_ids_file="$(printf '%s' "$volume_ids" | json_file_from_stdin "snapshot-volume-ids")"
 
     info "    Querying account-owned snapshots..."
     snaps="$(aws_json_quiet ec2 describe-snapshots --owner-ids "$ACCOUNT_ID" || echo '{"Snapshots":[]}')"
-    info "    Account-owned snapshots scanned: $(printf '%s' "$snaps" | jq '.Snapshots | length')"
+    info "    Snapshots scanned: $(printf '%s' "$snaps" | jq '.Snapshots | length')"
 
-    result="$(printf '%s' "$snaps" | jq -c --arg iid "$instance_id" --argjson vids "$volume_ids" '
+    result="$(printf '%s' "$snaps" | jq -c \
+      --arg iid "$instance_id" \
+      --slurpfile vids_file "$volume_ids_file" '
+      ($vids_file[0]) as $vids |
       def tag_obj:
         if . == null then {} else reduce .[] as $t ({}; . + {($t.Key): $t.Value}) end;
 
@@ -451,17 +485,21 @@ collect_snapshots_for_instance() {
 collect_amis_for_instance() {
     local instance_id="$1"
     local snapshots_json="$2"
-    local snapshot_ids images start result
+    local snapshot_ids images start result snapshot_ids_file
 
     start="$(now_epoch)"
     info "  4/5 Discover AMIs..."
     snapshot_ids="$(printf '%s' "$snapshots_json" | jq -c '[.[].snapshotId]')"
-    info "    Known snapshot IDs: $(printf '%s' "$snapshot_ids" | jq -r 'if length == 0 then "(none)" else join(",") end')"
+    info "    Snapshots available for matching: $(printf '%s' "$snapshot_ids" | jq 'length')"
+    snapshot_ids_file="$(printf '%s' "$snapshot_ids" | json_file_from_stdin "ami-snapshot-ids")"
     info "    Querying owned AMIs..."
     images="$(aws_json_quiet ec2 describe-images --owners "$ACCOUNT_ID" || echo '{"Images":[]}')"
-    info "    Owned AMIs scanned: $(printf '%s' "$images" | jq '.Images | length')"
+    info "    AMIs scanned: $(printf '%s' "$images" | jq '.Images | length')"
 
-    result="$(printf '%s' "$images" | jq -c --arg iid "$instance_id" --argjson sids "$snapshot_ids" '
+    result="$(printf '%s' "$images" | jq -c \
+      --arg iid "$instance_id" \
+      --slurpfile sids_file "$snapshot_ids_file" '
+      ($sids_file[0]) as $sids |
       def tag_obj:
         if . == null then {} else reduce .[] as $t ({}; . + {($t.Key): $t.Value}) end;
 
@@ -537,10 +575,10 @@ collect_backup_for_instance() {
         return 0
     fi
 
-    local start combined volume_ids volume_id instance_arn volume_arn points count
+    local start combined volume_ids volume_id instance_arn volume_arn points count points_file
+    local -a recovery_files=()
     start="$(now_epoch)"
     info "  5/5 Discover AWS Backup recovery points..."
-    combined='[]'
 
     if [[ -z "$EFFECTIVE_REGION" || "$EFFECTIVE_REGION" == "not set" ]]; then
         warning "AWS region is not set; cannot build resource ARNs for Backup discovery"
@@ -554,7 +592,8 @@ collect_backup_for_instance() {
     if points=$(query_backup_recovery_points_by_arn "$instance_arn" "$instance_id"); then
         count="$(printf '%s' "$points" | jq 'length')"
         info "    Instance recovery points: $count"
-        combined="$(jq -n --argjson acc "$combined" --argjson page "$points" '$acc + $page')"
+        points_file="$(printf '%s' "$points" | json_file_from_stdin "backup-instance")"
+        recovery_files+=("$points_file")
     else
         warning "Could not list Backup recovery points for instance $instance_id"
     fi
@@ -568,16 +607,18 @@ collect_backup_for_instance() {
         if points=$(query_backup_recovery_points_by_arn "$volume_arn" "$instance_id"); then
             count="$(printf '%s' "$points" | jq 'length')"
             info "    Volume $volume_id recovery points: $count"
-            combined="$(jq -n --argjson acc "$combined" --argjson page "$points" '$acc + $page')"
+            points_file="$(printf '%s' "$points" | json_file_from_stdin "backup-volume")"
+            recovery_files+=("$points_file")
         else
             warning "Could not list Backup recovery points for volume $volume_id"
         fi
     done <<< "$volume_ids"
 
-    combined="$(printf '%s' "$combined" | jq -c '
-      group_by(.recoveryPointArn)
-      | map(.[0])
-    ')"
+    if [[ ${#recovery_files[@]} -eq 0 ]]; then
+        combined='[]'
+    else
+        combined="$(jq -sc 'add | unique_by(.recoveryPointArn)' "${recovery_files[@]}")"
+    fi
 
     info "  Backup recovery points found: $(printf '%s' "$combined" | jq 'length') ($(elapsed_since "$start")s)"
     printf '%s' "$combined"
@@ -615,6 +656,7 @@ collect_dlm_policies() {
 build_instance_record() {
     local instance_id="$1"
     local instance_json volumes snapshots amis backups notes found_json start
+    local instance_file volumes_file snapshots_file amis_file backups_file notes_file
 
     start="$(now_epoch)"
     info "Collecting resources for $instance_id"
@@ -634,18 +676,26 @@ build_instance_record() {
     backups="$(collect_backup_for_instance "$instance_id" "$volumes")"
     info "Finished collecting resources for $instance_id ($(elapsed_since "$start")s)"
 
+    instance_file="$(printf '%s' "$instance_json" | json_file_from_stdin "instance")"
+    volumes_file="$(printf '%s' "$volumes" | json_file_from_stdin "volumes")"
+    snapshots_file="$(printf '%s' "$snapshots" | json_file_from_stdin "snapshots")"
+    amis_file="$(printf '%s' "$amis" | json_file_from_stdin "amis")"
+    backups_file="$(printf '%s' "$backups" | json_file_from_stdin "backups")"
+    notes_file="$(printf '%s' "$notes" | json_file_from_stdin "notes")"
+
     jq -n \
-        --argjson inst "$instance_json" \
-        --argjson volumes "$volumes" \
-        --argjson snapshots "$snapshots" \
-        --argjson amis "$amis" \
-        --argjson backups "$backups" \
-        --argjson notes "$notes" \
+        --slurpfile inst_file "$instance_file" \
+        --slurpfile volumes_file "$volumes_file" \
+        --slurpfile snapshots_file "$snapshots_file" \
+        --slurpfile amis_file "$amis_file" \
+        --slurpfile backups_file "$backups_file" \
+        --slurpfile notes_file "$notes_file" \
         --argjson found "$found_json" \
         --arg iid "$instance_id" '
         def tag_obj:
           if . == null then {} else reduce .[] as $t ({}; . + {($t.Key): $t.Value}) end;
 
+        ($inst_file[0]) as $inst |
         {
           instanceId: $iid,
           found: $found,
@@ -654,24 +704,30 @@ build_instance_record() {
           availabilityZone: ($inst.Placement.AvailabilityZone // null),
           launchTime: ($inst.LaunchTime // null),
           tags: ($inst.Tags | tag_obj),
-          volumes: $volumes,
-          snapshots: $snapshots,
-          amis: $amis,
-          backupRecoveryPoints: $backups,
-          notes: $notes
+          volumes: $volumes_file[0],
+          snapshots: $snapshots_file[0],
+          amis: $amis_file[0],
+          backupRecoveryPoints: $backups_file[0],
+          notes: $notes_file[0]
         }
       '
 }
 
 build_summary() {
-    local dlm records='[]' id record
+    local dlm id record_file records_file dlm_file
+    local -a record_files=()
 
     for id in "${INSTANCE_IDS[@]}"; do
-        record="$(build_instance_record "$id")"
-        records="$(jq -n --argjson acc "$records" --argjson rec "$record" '$acc + [$rec]')"
+        record_file="$(mktemp "$JSON_WORKSPACE/instance-record.XXXXXX.json")"
+        build_instance_record "$id" > "$record_file"
+        jq empty "$record_file"
+        record_files+=("$record_file")
     done
 
     dlm="$(collect_dlm_policies)"
+    dlm_file="$(printf '%s' "$dlm" | json_file_from_stdin "dlm")"
+    records_file="$(mktemp "$JSON_WORKSPACE/instance-records.XXXXXX.json")"
+    jq -s '.' "${record_files[@]}" > "$records_file"
 
     jq -n \
         --arg accountId "$ACCOUNT_ID" \
@@ -679,8 +735,8 @@ build_summary() {
         --arg profile "$PROFILE" \
         --arg platform "$PLATFORM" \
         --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        --argjson instances "$records" \
-        --argjson dlm "$dlm" \
+        --slurpfile instances_file "$records_file" \
+        --slurpfile dlm_file "$dlm_file" \
         --argjson skipBackup "$SKIP_BACKUP" \
         --argjson skipDlm "$SKIP_DLM" \
         '{
@@ -693,8 +749,8 @@ build_summary() {
             skipBackup: $skipBackup,
             skipDlm: $skipDlm
           },
-          dlmPolicies: $dlm,
-          instances: $instances
+          dlmPolicies: $dlm_file[0],
+          instances: $instances_file[0]
         }'
 }
 
@@ -938,6 +994,7 @@ main() {
     info "Platform: $PLATFORM"
 
     check_dependencies
+    init_json_workspace
 
     [[ -n "$PROFILE" ]] && PROFILE_ARG="--profile $PROFILE"
     [[ -n "$REGION" ]] && REGION_ARG="--region $REGION"
