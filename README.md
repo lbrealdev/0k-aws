@@ -27,6 +27,9 @@ A personal wiki of AWS knowledge. CLI commands, practical tips, and lessons lear
 - [Databases](#databases)
   - [Overview](./databases/README.md)
   - [RDS Deletion](./databases/rds-deletion.md)
+- [EC2](#ec2)
+  - [Overview](./ec2/README.md)
+  - [EC2 Elimination](./ec2/ec2-elimination.md)
 - [AWS Developer Tools](#aws-developer-tools)
   - [Overview](./developer-tools/README.md)
   - [CodeCommit](./developer-tools/codecommit/README.md)
@@ -48,6 +51,16 @@ Operational guides for AWS database services.
 See [databases/README.md](./databases/README.md) for the section index.
 
 - [RDS Deletion](./databases/rds-deletion.md) — considerations and checklist for deleting an RDS instance.
+
+---
+
+## EC2
+
+Operational guides for Amazon EC2 elimination, backups, and cleanup.
+
+See [ec2/README.md](./ec2/README.md) for the section index.
+
+- [EC2 Elimination](./ec2/ec2-elimination.md) — inventory snapshots, AMIs, DLM, and AWS Backup before removing EC2 resources.
 
 ---
 

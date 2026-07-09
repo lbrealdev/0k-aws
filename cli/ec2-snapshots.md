@@ -8,3 +8,8 @@ aws ec2 describe-snapshots \
   --query "Snapshots[*].{ID:SnapshotId,Name:Tags[?Key == 'Name'].Value | [0]}" \
   --output table
 ```
+
+## Related
+
+- [EC2 Elimination](../ec2/ec2-elimination.md) — snapshots vs AMIs vs AWS Backup vs DLM
+- [`scripts/ec2-backup-inventory.sh`](../scripts/ec2-backup-inventory.sh) — inventory account-owned snapshots
