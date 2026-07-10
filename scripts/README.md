@@ -8,14 +8,15 @@ Convention: prefer **read-only** helpers for inventory/discovery. Write helpers 
 
 | Script | Mode | Purpose | Related docs |
 |--------|------|---------|--------------|
-| [`ec2-inventory.sh`](./ec2-inventory.sh) | Read-only | Instance-scoped inventory of volumes, snapshots, AMIs, DLM policies, and AWS Backup recovery points (JSON/CSV report) | [EC2 Elimination](../ec2/ec2-elimination.md), [ec2/](../ec2/README.md) |
+| [`ec2-inventory.sh`](./ec2-inventory.sh) | Read-only | Instance-scoped inventory of volumes, snapshots, AMIs, DLM policies, and AWS Backup recovery points (JSON/CSV report) | [EC2 Elimination](../ec2/ec2-elimination.md), [Manual snapshots](../ec2/manual-snapshots.md), [ec2/](../ec2/README.md) |
+| [`ec2-final-snapshot.sh`](./ec2-final-snapshot.sh) | **Write** | Crash-consistent EBS snapshots for live instances (`create-snapshots`, copy volume tags, `Purpose=manual-final-snapshot`; supports `--dry-run`) | [Manual snapshots](../ec2/manual-snapshots.md), [EC2 Elimination](../ec2/ec2-elimination.md) |
 | [`list-resources.sh`](./list-resources.sh) | Read-only | List account resources via Resource Groups Tagging API (profiles/regions, optional report) | [AWS List Resources](../aws-list-resources/README.md) |
 | [`s3-bucket-object.sh`](./s3-bucket-object.sh) | Read-only | List S3 buckets and object counts | [cli/s3.md](../cli/s3.md) |
 | [`rds-modify-snapshot.sh`](./rds-modify-snapshot.sh) | **Write** | Batch-modify RDS DB snapshot option groups (supports `--dry-run`) | [RDS Deletion](../databases/rds-deletion.md), [databases/](../databases/README.md) |
 
 ## Relationships
 
-- **EC2 inventory vs future snapshot helper:** `ec2-inventory.sh` only reports what exists. Creating final/manual EBS snapshots before a change is a separate write workflow (tracked as a future helper; see issue discussions around EC2 final snapshots).
+- **EC2 inventory vs final snapshots:** `ec2-inventory.sh` only reports what exists. `ec2-final-snapshot.sh` creates intentional snapshots before a change (does not terminate or delete).
 - **RDS:** `rds-modify-snapshot.sh` changes snapshot metadata (option groups); it does not delete instances. Pair with the RDS deletion guide when planning teardown.
 - **Discovery:** `list-resources.sh` is account-wide tagging-API discovery; `ec2-inventory.sh` is deep and instance-scoped.
 

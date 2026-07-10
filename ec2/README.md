@@ -1,9 +1,10 @@
 # EC2
 
-Operational guides for Amazon EC2 elimination, backups, and related cleanup.
+Operational guides and good practices for day-to-day Amazon EC2 work — inventory, backups, snapshots, and cleanup.
 
 ## Guides
 
+- [Manual / final snapshots](./manual-snapshots.md) — when and how to take intentional EBS snapshots before risky changes
 - [EC2 Elimination](./ec2-elimination.md) — inventory, snapshots, AMIs, backups, and checklist for removing EC2 resources safely
   - Includes [Investigate recovery points](./ec2-elimination.md#investigate-recovery-points-before-adding-a-backup-filter) before adding any Backup filter
 
@@ -17,4 +18,5 @@ Operational guides for Amazon EC2 elimination, backups, and related cleanup.
 
 ## Related Scripts
 
-- [`scripts/ec2-inventory.sh`](../scripts/ec2-inventory.sh) — read-only, instance-scoped JSON/CSV report generator for volumes, snapshots, AMIs, DLM, and AWS Backup
+- [`scripts/ec2-inventory.sh`](../scripts/ec2-inventory.sh) — read-only, instance-scoped JSON/CSV report (volumes, snapshots, AMIs, DLM, AWS Backup)
+- [`scripts/ec2-final-snapshot.sh`](../scripts/ec2-final-snapshot.sh) — create crash-consistent final/manual snapshots for live instances (**write**)

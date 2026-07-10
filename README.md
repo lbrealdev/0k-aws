@@ -38,6 +38,7 @@ A personal wiki of AWS knowledge. CLI commands, practical tips, and lessons lear
   - [RDS Deletion](./databases/rds-deletion.md)
 - [EC2](#ec2)
   - [Overview](./ec2/README.md)
+  - [Manual / final snapshots](./ec2/manual-snapshots.md)
   - [EC2 Elimination](./ec2/ec2-elimination.md)
 - [AWS List Resources](#aws-list-resources)
   - [Overview](./aws-list-resources/README.md)
@@ -53,6 +54,7 @@ A personal wiki of AWS knowledge. CLI commands, practical tips, and lessons lear
 - [Scripts](#scripts)
   - [Overview](./scripts/README.md)
   - [ec2-inventory.sh](./scripts/ec2-inventory.sh)
+  - [ec2-final-snapshot.sh](./scripts/ec2-final-snapshot.sh)
   - [rds-modify-snapshot.sh](./scripts/rds-modify-snapshot.sh)
   - [s3-bucket-object.sh](./scripts/s3-bucket-object.sh)
   - [list-resources.sh](./scripts/list-resources.sh)
@@ -101,6 +103,7 @@ Operational guides and good practices for day-to-day Amazon EC2 work — invento
 
 See [ec2/README.md](./ec2/README.md) for the section index.
 
+- [Manual / final snapshots](./ec2/manual-snapshots.md) — intentional EBS snapshots before risky or destructive changes.
 - [EC2 Elimination](./ec2/ec2-elimination.md) — inventory volumes, snapshots, AMIs, DLM, and AWS Backup before removing EC2 resources.
 
 ---
@@ -133,6 +136,7 @@ Helper scripts for common operational tasks.
 See [scripts/README.md](./scripts/README.md) for the section index (purpose, read-only vs write, related docs).
 
 - [`scripts/ec2-inventory.sh`](./scripts/ec2-inventory.sh) — read-only, instance-scoped inventory (volumes, snapshots, AMIs, DLM, Backup).
+- [`scripts/ec2-final-snapshot.sh`](./scripts/ec2-final-snapshot.sh) — create crash-consistent manual/final EBS snapshots (**write**).
 - [`scripts/rds-modify-snapshot.sh`](./scripts/rds-modify-snapshot.sh) — batch-modify RDS DB snapshot option groups (**write**).
 - [`scripts/s3-bucket-object.sh`](./scripts/s3-bucket-object.sh) — list object counts per S3 bucket.
 - [`scripts/list-resources.sh`](./scripts/list-resources.sh) — list account resources across profiles/regions.

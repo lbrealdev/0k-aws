@@ -253,7 +253,7 @@ For elimination projects, inventory **all four**. Keeping only “EC2 console sn
 Decide retention before terminate:
 
 1. **Need relaunchable image?** Create an AMI (optionally without reboot).
-2. **Need volume-level restore only?** Snapshot specific volumes.
+2. **Need volume-level restore only?** Snapshot specific volumes (prefer the [manual / final snapshots](./manual-snapshots.md) practice and [`scripts/ec2-final-snapshot.sh`](../scripts/ec2-final-snapshot.sh)).
 3. **Already covered by AWS Backup / DLM?** Confirm recent successful recovery points before deleting compute.
 
 ### Create a final AMI
@@ -289,7 +289,7 @@ aws ec2 wait snapshot-completed --snapshot-ids <SNAPSHOT_ID>
 
 - [ ] Inventory instances, volumes, snapshots, AMIs, DLM, AWS Backup
 - [ ] Confirm which volumes have `DeleteOnTermination=true` vs `false`
-- [ ] Create final AMI and/or snapshots if retention is required
+- [ ] Create final AMI and/or snapshots if retention is required ([manual snapshots](./manual-snapshots.md) / [`ec2-final-snapshot.sh`](../scripts/ec2-final-snapshot.sh))
 - [ ] Note Elastic IPs, ENIs, and security groups in use
 - [ ] Check Auto Scaling groups / launch templates / load balancers that reference the instances
 - [ ] Stop applications / drain traffic if needed
