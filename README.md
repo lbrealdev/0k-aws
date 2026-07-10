@@ -4,15 +4,13 @@ A personal wiki of AWS knowledge. CLI commands, practical tips, and lessons lear
 
 <!-- TOC -->
 
-- [AWS CLI & CloudShell](#aws-cli--cloudshell)
-  - [AWS CLI](./aws-cli.md)
-  - [AWS CloudShell](./aws-cloudshell.md)
 - [AWS Auth](#aws-auth)
   - [Overview](./aws-auth/README.md)
   - [IAM User](./aws-auth/iam-user.md)
   - [AWS SSO](./aws-auth/aws-sso.md)
   - [IAM Identity Center](./aws-auth/iam-identity-center.md)
 - [CLI](#cli)
+  - [Overview](./cli/README.md)
   - [Configure](./cli/configure.md)
   - [CodeArtifact](./cli/codeartifact.md)
   - [CodeBuild](./cli/codebuild.md)
@@ -33,6 +31,8 @@ A personal wiki of AWS knowledge. CLI commands, practical tips, and lessons lear
   - [STS](./cli/sts.md)
   - [SSO](./cli/sso.md)
   - [Login](./cli/login.md)
+- [AWS CloudShell](#aws-cloudshell)
+  - [Overview](./aws-cloudshell/README.md)
 - [Databases](#databases)
   - [Overview](./databases/README.md)
   - [RDS Deletion](./databases/rds-deletion.md)
@@ -58,15 +58,6 @@ A personal wiki of AWS knowledge. CLI commands, practical tips, and lessons lear
 
 ---
 
-## AWS CLI & CloudShell
-
-Notes for installing and using the AWS CLI, plus CloudShell tooling tips.
-
-- [AWS CLI](./aws-cli.md) — install and set up AWS CLI v2.
-- [AWS CloudShell](./aws-cloudshell.md) — persistent tooling tips for CloudShell (e.g. mise).
-
----
-
 ## AWS Auth
 
 Methods for authenticating with AWS.
@@ -81,7 +72,15 @@ See [aws-auth/README.md](./aws-auth/README.md) for the section index.
 
 ## CLI
 
-AWS CLI commands for various AWS services. See the TOC above for the full list, including Security Hub.
+AWS CLI install notes, everyday nuances, and command cheat sheets. Each page under `cli/` maps to an `aws` subcommand or service area; see [cli/README.md](./cli/README.md) for the section hub.
+
+---
+
+## AWS CloudShell
+
+Tooling tips for the AWS CloudShell environment.
+
+See [aws-cloudshell/README.md](./aws-cloudshell/README.md) for the section index.
 
 ---
 
