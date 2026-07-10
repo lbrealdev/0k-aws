@@ -41,9 +41,11 @@ DEFAULT_PURPOSE="manual-final-snapshot"
 
 PROFILE=""
 REGION=""
+MODE="volumes"
 DRY_RUN=false
 WAIT_SNAPSHOTS=false
 SKIP_CONFIRM=false
+NO_REBOOT=false
 REPORT_DIR=""
 ACCOUNT_ID=""
 EFFECTIVE_REGION=""
@@ -60,8 +62,13 @@ usage() {
     cat << EOF
 Usage: $0 --instance <instance-id>[,<instance-id>...] [OPTIONS]
 
-Create crash-consistent EBS snapshots for attached volumes on live EC2 instances
-(aws ec2 create-snapshots). Copies volume tags and adds Purpose=${DEFAULT_PURPOSE}.
+Create intentional final backups for live EC2 instances.
+
+Modes:
+  volumes (default)  aws ec2 create-snapshots — EBS snapshots of attached volumes
+                     (copies volume tags + Purpose=${DEFAULT_PURPOSE})
+  ami                aws ec2 create-image — AMI + backing snapshots (relaunchable)
+                     (tags AMI and all backing snapshots with Purpose + optional --tag)
 
 Does NOT terminate or delete resources. Instance must exist.
 
@@ -69,19 +76,22 @@ Required arguments:
   --instance, -i     One or more instance IDs (repeatable or comma-separated)
 
 Optional arguments:
+  --mode             volumes (default) or ami
   --region, -r       AWS region
   --profile, -p      AWS profile name
-  --tag Key=Value    Extra snapshot tag (repeatable; cannot override Purpose)
-  --dry-run          Preview volumes/tags; do not create snapshots
-  --wait             Wait until each snapshot completes
+  --tag Key=Value    Extra tag (repeatable; cannot override Purpose)
+  --dry-run          Preview only; do not create snapshots or AMIs
+  --wait             Wait until snapshots/AMI become available
+  --no-reboot        AMI mode only: skip reboot (crash-consistent; less safe)
   --yes, -y          Skip confirmation prompt
   --report-dir       Report directory (default: report/ec2-final-snapshot-<timestamp>)
   --help, -h         Show this help message
 
 Examples:
   $0 -i i-0123456789abcdef0 --region us-east-1 --dry-run
-  $0 -i i-aaa --profile prod --tag ChangeTicket=CHG123
-  $0 -i i-aaa -i i-bbb --wait --yes
+  $0 -i i-aaa --mode volumes --tag ChangeTicket=CHG123
+  $0 -i i-aaa --mode ami --wait --yes
+  $0 -i i-aaa --mode ami --no-reboot --dry-run
 
 EOF
 }
@@ -217,7 +227,7 @@ dedupe_instances() {
     INSTANCE_IDS=("${unique[@]}")
 }
 
-build_tag_specifications() {
+build_tags_json() {
     local tags_json i
     tags_json="$(jq -n --arg purpose "$DEFAULT_PURPOSE" '[{Key:"Purpose",Value:$purpose}]')"
     if [[ ${#TAG_KEYS[@]} -gt 0 ]]; then
@@ -226,8 +236,21 @@ build_tag_specifications() {
                 '. + [{Key:$k,Value:$v}]' <<< "$tags_json")"
         done
     fi
-    jq -nc --argjson tags "$tags_json" \
+    printf '%s' "$tags_json"
+}
+
+build_tag_specifications_volumes() {
+    jq -nc --argjson tags "$(build_tags_json)" \
         '[{ResourceType:"snapshot",Tags:$tags}]'
+}
+
+build_tag_specifications_ami() {
+    # Same tags on AMI and all backing snapshots (AWS applies one snapshot tag set to every volume).
+    jq -nc --argjson tags "$(build_tags_json)" \
+        '[
+          {ResourceType:"image",Tags:$tags},
+          {ResourceType:"snapshot",Tags:$tags}
+        ]'
 }
 
 format_tags_preview() {
@@ -239,6 +262,13 @@ format_tags_preview() {
         done
     fi
     printf '%s' "$line"
+}
+
+ami_name_for_instance() {
+    local instance_id="$1"
+    local stamp
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    printf 'final-%s-%s' "$instance_id" "$stamp"
 }
 
 confirm_action() {
@@ -289,33 +319,47 @@ fetch_instance_and_volumes() {
     '
 }
 
-process_instance() {
+fetch_ami_backing_snapshots() {
+    local image_id="$1"
+    local raw
+    if ! raw=$(aws_json_quiet ec2 describe-images --image-ids "$image_id"); then
+        echo '[]'
+        return 0
+    fi
+    printf '%s' "$raw" | jq -c '
+      [.Images[0].BlockDeviceMappings[]?
+        | select(.Ebs.SnapshotId != null)
+        | {
+            snapshotId: .Ebs.SnapshotId,
+            device: (.DeviceName // null),
+            volumeSize: (.Ebs.VolumeSize // null)
+          }
+      ]
+    '
+}
+
+write_failed_result() {
+    local result_file="$1"
+    local instance_id="$2"
+    local msg="$3"
+    jq -n --arg iid "$instance_id" --arg msg "$msg" --arg mode "$MODE" \
+        '{instanceId:$iid,mode:$mode,status:"failed",message:$msg,volumes:[],snapshots:[],ami:null}' \
+        > "$result_file"
+}
+
+process_instance_volumes() {
     local instance_id="$1"
-    local result_file="$2"
-    local preview desc tag_spec created wait_ids snap_json utc status message
+    local preview="$2"
+    local result_file="$3"
+    local desc tag_spec created snap_json wait_ids utc state vol_count
     local -a snapshot_ids=()
 
     utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     desc="Manual final snapshot for ${instance_id} at ${utc}"
-
-    info "Processing $instance_id"
-    if ! preview=$(fetch_instance_and_volumes "$instance_id"); then
-        error "Instance not found or describe-instances failed: $instance_id"
-        jq -n --arg iid "$instance_id" --arg msg "Instance not found or describe-instances failed" \
-            '{instanceId:$iid,status:"failed",message:$msg,volumes:[],snapshots:[]}' > "$result_file"
-        return 1
-    fi
-    if [[ -z "$preview" || "$preview" == "null" ]]; then
-        error "Instance not returned by describe-instances: $instance_id"
-        jq -n --arg iid "$instance_id" --arg msg "Instance not returned by describe-instances" \
-            '{instanceId:$iid,status:"failed",message:$msg,volumes:[],snapshots:[]}' > "$result_file"
-        return 1
-    fi
-
-    local state vol_count
     state="$(printf '%s' "$preview" | jq -r '.state')"
     vol_count="$(printf '%s' "$preview" | jq '.volumes | length')"
 
+    info "  Mode: volumes"
     info "  State: $state"
     info "  Attached volumes: $vol_count"
     printf '%s' "$preview" | jq -r '.volumes[] | "    - \(.volumeId) device=\(.device // "-") deleteOnTermination=\(.deleteOnTermination|tostring)"' >&2
@@ -325,40 +369,43 @@ process_instance() {
 
     if [[ "$vol_count" -eq 0 ]]; then
         warning "  No attached EBS volumes; nothing to snapshot"
-        jq -n --argjson preview "$preview" --arg msg "No attached EBS volumes" \
-            '$preview + {status:"failed",message:$msg,snapshots:[]}' > "$result_file"
+        jq -n --argjson preview "$preview" --arg msg "No attached EBS volumes" --arg mode "$MODE" \
+            '$preview + {mode:$mode,status:"failed",message:$msg,snapshots:[],ami:null}' > "$result_file"
         return 1
     fi
 
     if [[ "$DRY_RUN" = true ]]; then
-        success "  Dry-run: would create snapshots (no changes made)"
-        jq -n --argjson preview "$preview" --arg desc "$desc" --arg tags "$(format_tags_preview)" \
+        success "  Dry-run: would create volume snapshots (no changes made)"
+        jq -n --argjson preview "$preview" --arg desc "$desc" --arg tags "$(format_tags_preview)" --arg mode "$MODE" \
             '$preview + {
+              mode:$mode,
               status:"dry-run",
               message:"Preview only; create-snapshots not called",
               description:$desc,
               tagsToAdd:$tags,
               copyTagsFromSource:"volume",
-              snapshots:[]
+              snapshots:[],
+              ami:null
             }' > "$result_file"
         return 0
     fi
 
-    if ! confirm_action "Create snapshots for $instance_id ($vol_count volume(s))?"; then
-        jq -n --argjson preview "$preview" \
-            '$preview + {status:"skipped",message:"User declined confirmation",snapshots:[]}' > "$result_file"
+    if ! confirm_action "Create volume snapshots for $instance_id ($vol_count volume(s))?"; then
+        jq -n --argjson preview "$preview" --arg mode "$MODE" \
+            '$preview + {mode:$mode,status:"skipped",message:"User declined confirmation",snapshots:[],ami:null}' \
+            > "$result_file"
         return 1
     fi
 
-    tag_spec="$(build_tag_specifications)"
+    tag_spec="$(build_tag_specifications_volumes)"
     info "  Calling create-snapshots..."
     if ! created=$(aws_json ec2 create-snapshots \
         --instance-specification "InstanceId=$instance_id" \
         --copy-tags-from-source volume \
         --description "$desc" \
         --tag-specifications "$tag_spec"); then
-        jq -n --argjson preview "$preview" --arg msg "create-snapshots failed" \
-            '$preview + {status:"failed",message:$msg,snapshots:[]}' > "$result_file"
+        jq -n --argjson preview "$preview" --arg msg "create-snapshots failed" --arg mode "$MODE" \
+            '$preview + {mode:$mode,status:"failed",message:$msg,snapshots:[],ami:null}' > "$result_file"
         return 1
     fi
 
@@ -382,21 +429,202 @@ process_instance() {
             success "  Snapshots completed"
         else
             error "  Wait failed for one or more snapshots"
-            jq -n --argjson preview "$preview" --argjson snaps "$snap_json" --arg msg "Snapshots created but wait failed" \
-                '$preview + {status:"failed",message:$msg,snapshots:$snaps}' > "$result_file"
+            jq -n --argjson preview "$preview" --argjson snaps "$snap_json" --arg msg "Snapshots created but wait failed" --arg mode "$MODE" \
+                '$preview + {mode:$mode,status:"failed",message:$msg,snapshots:$snaps,ami:null}' > "$result_file"
             return 1
         fi
     fi
 
-    jq -n --argjson preview "$preview" --argjson snaps "$snap_json" --arg desc "$desc" \
+    jq -n --argjson preview "$preview" --argjson snaps "$snap_json" --arg desc "$desc" --arg mode "$MODE" \
         '$preview + {
+          mode:$mode,
           status:"success",
           message:"Snapshots created",
           description:$desc,
           copyTagsFromSource:"volume",
-          snapshots:$snaps
+          snapshots:$snaps,
+          ami:null
         }' > "$result_file"
     return 0
+}
+
+process_instance_ami() {
+    local instance_id="$1"
+    local preview="$2"
+    local result_file="$3"
+    local desc ami_name tag_spec created image_id snap_json utc state vol_count reboot_note
+    local create_args=()
+
+    utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    desc="Manual final AMI for ${instance_id} at ${utc}"
+    ami_name="$(ami_name_for_instance "$instance_id")"
+    state="$(printf '%s' "$preview" | jq -r '.state')"
+    vol_count="$(printf '%s' "$preview" | jq '.volumes | length')"
+
+    if [[ "$NO_REBOOT" = true ]]; then
+        reboot_note="no-reboot (crash-consistent; filesystem integrity not guaranteed)"
+    elif [[ "$state" == "running" ]]; then
+        reboot_note="AWS default reboot (running instance will reboot during AMI creation)"
+    else
+        reboot_note="instance is ${state}; AWS will not start a stopped instance for AMI creation"
+    fi
+
+    info "  Mode: ami"
+    info "  State: $state"
+    info "  Attached volumes: $vol_count"
+    printf '%s' "$preview" | jq -r '.volumes[] | "    - \(.volumeId) device=\(.device // "-") deleteOnTermination=\(.deleteOnTermination|tostring)"' >&2
+    info "  AMI name (generated): $ami_name"
+    info "  Reboot behavior: $reboot_note"
+    info "  Copy volume tags: no (AMI API limitation; Purpose + --tag applied to AMI and all backing snapshots)"
+    info "  Tags to add: $(format_tags_preview)"
+    info "  Description: $desc"
+
+    if [[ "$vol_count" -eq 0 ]]; then
+        warning "  No attached EBS volumes; cannot create EBS-backed AMI"
+        jq -n --argjson preview "$preview" --arg msg "No attached EBS volumes" --arg mode "$MODE" \
+            '$preview + {mode:$mode,status:"failed",message:$msg,snapshots:[],ami:null}' > "$result_file"
+        return 1
+    fi
+
+    if [[ "$DRY_RUN" = true ]]; then
+        success "  Dry-run: would create AMI (no changes made)"
+        jq -n \
+            --argjson preview "$preview" \
+            --arg desc "$desc" \
+            --arg tags "$(format_tags_preview)" \
+            --arg mode "$MODE" \
+            --arg amiName "$ami_name" \
+            --arg reboot "$reboot_note" \
+            --argjson noReboot "$NO_REBOOT" \
+            '$preview + {
+              mode:$mode,
+              status:"dry-run",
+              message:"Preview only; create-image not called",
+              description:$desc,
+              tagsToAdd:$tags,
+              copyTagsFromSource:null,
+              rebootBehavior:$reboot,
+              noReboot:$noReboot,
+              snapshots:[],
+              ami:{imageId:null,name:$amiName,state:null}
+            }' > "$result_file"
+        return 0
+    fi
+
+    if ! confirm_action "Create AMI for $instance_id ($vol_count volume(s))? $reboot_note"; then
+        jq -n --argjson preview "$preview" --arg mode "$MODE" \
+            '$preview + {mode:$mode,status:"skipped",message:"User declined confirmation",snapshots:[],ami:null}' \
+            > "$result_file"
+        return 1
+    fi
+
+    tag_spec="$(build_tag_specifications_ami)"
+    create_args=(
+        ec2 create-image
+        --instance-id "$instance_id"
+        --name "$ami_name"
+        --description "$desc"
+        --tag-specifications "$tag_spec"
+    )
+    if [[ "$NO_REBOOT" = true ]]; then
+        create_args+=(--no-reboot)
+    fi
+
+    info "  Calling create-image..."
+    if ! created=$(aws_json "${create_args[@]}"); then
+        jq -n --argjson preview "$preview" --arg msg "create-image failed" --arg mode "$MODE" \
+            '$preview + {mode:$mode,status:"failed",message:$msg,snapshots:[],ami:null}' > "$result_file"
+        return 1
+    fi
+
+    image_id="$(printf '%s' "$created" | jq -r '.ImageId // empty' | tr -d '\r')"
+    if [[ -z "$image_id" ]]; then
+        error "  create-image returned no ImageId"
+        jq -n --argjson preview "$preview" --arg msg "create-image returned no ImageId" --arg mode "$MODE" \
+            '$preview + {mode:$mode,status:"failed",message:$msg,snapshots:[],ami:null}' > "$result_file"
+        return 1
+    fi
+    success "  Created AMI: $image_id ($ami_name)"
+
+    if [[ "$WAIT_SNAPSHOTS" = true ]]; then
+        info "  Waiting for AMI to become available..."
+        if aws_cmd ec2 wait image-available --image-ids "$image_id"; then
+            success "  AMI available"
+        else
+            error "  Wait failed for AMI $image_id"
+            snap_json="$(fetch_ami_backing_snapshots "$image_id")"
+            jq -n \
+                --argjson preview "$preview" \
+                --argjson snaps "$snap_json" \
+                --arg imageId "$image_id" \
+                --arg amiName "$ami_name" \
+                --arg msg "AMI created but wait failed" \
+                --arg mode "$MODE" \
+                --arg reboot "$reboot_note" \
+                --argjson noReboot "$NO_REBOOT" \
+                '$preview + {
+                  mode:$mode,
+                  status:"failed",
+                  message:$msg,
+                  rebootBehavior:$reboot,
+                  noReboot:$noReboot,
+                  snapshots:$snaps,
+                  ami:{imageId:$imageId,name:$amiName,state:"pending"}
+                }' > "$result_file"
+            return 1
+        fi
+    fi
+
+    snap_json="$(fetch_ami_backing_snapshots "$image_id")"
+    jq -n \
+        --argjson preview "$preview" \
+        --argjson snaps "$snap_json" \
+        --arg desc "$desc" \
+        --arg imageId "$image_id" \
+        --arg amiName "$ami_name" \
+        --arg mode "$MODE" \
+        --arg reboot "$reboot_note" \
+        --argjson noReboot "$NO_REBOOT" \
+        '$preview + {
+          mode:$mode,
+          status:"success",
+          message:"AMI created",
+          description:$desc,
+          copyTagsFromSource:null,
+          rebootBehavior:$reboot,
+          noReboot:$noReboot,
+          snapshots:$snaps,
+          ami:{imageId:$imageId,name:$amiName,state:null}
+        }' > "$result_file"
+    return 0
+}
+
+process_instance() {
+    local instance_id="$1"
+    local result_file="$2"
+    local preview
+
+    info "Processing $instance_id"
+    if ! preview=$(fetch_instance_and_volumes "$instance_id"); then
+        error "Instance not found or describe-instances failed: $instance_id"
+        write_failed_result "$result_file" "$instance_id" "Instance not found or describe-instances failed"
+        return 1
+    fi
+    if [[ -z "$preview" || "$preview" == "null" ]]; then
+        error "Instance not returned by describe-instances: $instance_id"
+        write_failed_result "$result_file" "$instance_id" "Instance not returned by describe-instances"
+        return 1
+    fi
+
+    case "$MODE" in
+        volumes) process_instance_volumes "$instance_id" "$preview" "$result_file" ;;
+        ami) process_instance_ami "$instance_id" "$preview" "$result_file" ;;
+        *)
+            error "Invalid mode: $MODE"
+            write_failed_result "$result_file" "$instance_id" "Invalid mode"
+            return 1
+            ;;
+    esac
 }
 
 write_summary() {
@@ -414,15 +642,19 @@ write_summary() {
         --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --argjson dryRun "$DRY_RUN" \
         --arg purpose "$DEFAULT_PURPOSE" \
+        --arg mode "$MODE" \
+        --argjson noReboot "$NO_REBOOT" \
         '{
           accountId: $accountId,
           region: $region,
           profile: (if $profile == "" then null else $profile end),
           generatedAt: $generatedAt,
           options: {
+            mode: $mode,
             dryRun: $dryRun,
             defaultPurpose: $purpose,
-            copyTagsFromSource: "volume"
+            noReboot: $noReboot,
+            copyTagsFromSource: (if $mode == "volumes" then "volume" else null end)
           },
           instances: .
         }' "${RESULT_FILES[@]}")"
@@ -460,10 +692,20 @@ main() {
 
     check_aws_auth
 
+    info "Mode: $MODE"
     info "Instance IDs: ${INSTANCE_IDS[*]}"
     info "Tags to add: $(format_tags_preview)"
+    if [[ "$MODE" == "ami" ]]; then
+        if [[ "$NO_REBOOT" = true ]]; then
+            warning "AMI mode: --no-reboot set (crash-consistent)"
+        else
+            info "AMI mode: running instances will reboot by default during create-image"
+        fi
+    elif [[ "$NO_REBOOT" = true ]]; then
+        warning "--no-reboot is ignored in volumes mode"
+    fi
     if [[ "$DRY_RUN" = true ]]; then
-        warning "DRY RUN: no snapshots will be created"
+        warning "DRY RUN: no snapshots or AMIs will be created"
     fi
 
     if [[ -z "$REPORT_DIR" ]]; then
@@ -502,6 +744,21 @@ while [[ $# -gt 0 ]]; do
             add_instance_ids "$2"
             shift 2
             ;;
+        --mode)
+            if [[ -z "${2:-}" || "$2" == --* ]]; then
+                error "Option --mode requires a value (volumes|ami)"
+                exit 1
+            fi
+            MODE="$(strip_cr "$2" | tr '[:upper:]' '[:lower:]')"
+            case "$MODE" in
+                volumes|ami) ;;
+                *)
+                    error "Invalid mode: $MODE (expected volumes or ami)"
+                    exit 1
+                    ;;
+            esac
+            shift 2
+            ;;
         --region|-r)
             if [[ -z "${2:-}" || "$2" == --* ]]; then
                 error "Option --region requires a value"
@@ -532,6 +789,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --wait)
             WAIT_SNAPSHOTS=true
+            shift
+            ;;
+        --no-reboot)
+            NO_REBOOT=true
             shift
             ;;
         --yes|-y)

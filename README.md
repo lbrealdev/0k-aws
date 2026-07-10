@@ -136,7 +136,7 @@ Helper scripts for common operational tasks.
 See [scripts/README.md](./scripts/README.md) for the section index (purpose, read-only vs write, related docs).
 
 - [`scripts/ec2-inventory.sh`](./scripts/ec2-inventory.sh) — read-only, instance-scoped inventory (volumes, snapshots, AMIs, DLM, Backup).
-- [`scripts/ec2-final-snapshot.sh`](./scripts/ec2-final-snapshot.sh) — create crash-consistent manual/final EBS snapshots (**write**).
+- [`scripts/ec2-final-snapshot.sh`](./scripts/ec2-final-snapshot.sh) — create manual/final EBS snapshots or AMIs (**write**; `--mode volumes|ami`).
 - [`scripts/rds-modify-snapshot.sh`](./scripts/rds-modify-snapshot.sh) — batch-modify RDS DB snapshot option groups (**write**).
 - [`scripts/s3-bucket-object.sh`](./scripts/s3-bucket-object.sh) — list object counts per S3 bucket.
 - [`scripts/list-resources.sh`](./scripts/list-resources.sh) — list account resources across profiles/regions.

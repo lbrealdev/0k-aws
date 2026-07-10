@@ -252,8 +252,8 @@ For elimination projects, inventory **all four**. Keeping only “EC2 console sn
 
 Decide retention before terminate:
 
-1. **Need relaunchable image?** Create an AMI (optionally without reboot).
-2. **Need volume-level restore only?** Snapshot specific volumes (prefer the [manual / final snapshots](./manual-snapshots.md) practice and [`scripts/ec2-final-snapshot.sh`](../scripts/ec2-final-snapshot.sh)).
+1. **Need relaunchable image?** Create an AMI via [`ec2-final-snapshot.sh --mode ami`](../scripts/ec2-final-snapshot.sh) (running instances reboot by default) or the CLI below.
+2. **Need volume-level restore only?** Use `--mode volumes` (default) on the same helper — see [manual / final snapshots](./manual-snapshots.md).
 3. **Already covered by AWS Backup / DLM?** Confirm recent successful recovery points before deleting compute.
 
 ### Create a final AMI
