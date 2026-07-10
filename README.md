@@ -51,6 +51,7 @@ A personal wiki of AWS knowledge. CLI commands, practical tips, and lessons lear
   - [CodeBuild](./developer-tools/codebuild/README.md)
   - [CodePipeline](./developer-tools/codepipeline/README.md)
 - [Scripts](#scripts)
+  - [Overview](./scripts/README.md)
   - [ec2-inventory.sh](./scripts/ec2-inventory.sh)
   - [rds-modify-snapshot.sh](./scripts/rds-modify-snapshot.sh)
   - [s3-bucket-object.sh](./scripts/s3-bucket-object.sh)
@@ -129,7 +130,9 @@ See [developer-tools/README.md](./developer-tools/README.md) for more details.
 
 Helper scripts for common operational tasks.
 
+See [scripts/README.md](./scripts/README.md) for the section index (purpose, read-only vs write, related docs).
+
 - [`scripts/ec2-inventory.sh`](./scripts/ec2-inventory.sh) — read-only, instance-scoped inventory (volumes, snapshots, AMIs, DLM, Backup).
-- [`scripts/rds-modify-snapshot.sh`](./scripts/rds-modify-snapshot.sh) — batch-modify RDS DB snapshot option groups.
+- [`scripts/rds-modify-snapshot.sh`](./scripts/rds-modify-snapshot.sh) — batch-modify RDS DB snapshot option groups (**write**).
 - [`scripts/s3-bucket-object.sh`](./scripts/s3-bucket-object.sh) — list object counts per S3 bucket.
 - [`scripts/list-resources.sh`](./scripts/list-resources.sh) — list account resources across profiles/regions.
