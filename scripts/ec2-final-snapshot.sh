@@ -264,11 +264,53 @@ format_tags_preview() {
     printf '%s' "$line"
 }
 
+sanitize_ami_name_component() {
+    # AMI names allow: letters, digits, spaces, and ()./_-
+    # We normalize whitespace to '-' and drop unsupported characters.
+    local raw="$1"
+    local cleaned
+    cleaned="$(printf '%s' "$raw" | tr -d '\r')"
+    cleaned="$(printf '%s' "$cleaned" | sed -E \
+        -e 's/[[:space:]]+/-/g' \
+        -e 's/[^A-Za-z0-9()._/-]/-/g' \
+        -e 's/-+/-/g' \
+        -e 's/^-+//' \
+        -e 's/-+$//')"
+    printf '%s' "$cleaned"
+}
+
 ami_name_for_instance() {
     local instance_id="$1"
-    local stamp
-    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    printf 'final-%s-%s' "$instance_id" "$stamp"
+    local name_tag="${2:-}"
+    local stamp sanitized_name fixed_suffix fixed_len max_name_len name_part
+    stamp="$(date -u +%Y%m%d-%H%M%S)"
+    fixed_suffix="-${instance_id}-${stamp}-final"
+    fixed_len="${#fixed_suffix}"
+
+    # AWS AMI name max length is 128. Keep instance id, stamp, and -final intact.
+    if [[ "$fixed_len" -ge 128 ]]; then
+        printf '%s' "${instance_id}-${stamp}-final" | cut -c1-128
+        return 0
+    fi
+
+    sanitized_name="$(sanitize_ami_name_component "$name_tag")"
+    if [[ -z "$sanitized_name" ]]; then
+        printf '%s' "${instance_id}-${stamp}-final"
+        return 0
+    fi
+
+    max_name_len=$((128 - fixed_len))
+    if [[ "$max_name_len" -lt 1 ]]; then
+        printf '%s' "${instance_id}-${stamp}-final" | cut -c1-128
+        return 0
+    fi
+    name_part="$(printf '%s' "$sanitized_name" | cut -c1-"$max_name_len")"
+    name_part="$(printf '%s' "$name_part" | sed -E 's/-+$//')"
+    if [[ -z "$name_part" ]]; then
+        printf '%s' "${instance_id}-${stamp}-final"
+        return 0
+    fi
+    printf '%s%s' "$name_part" "$fixed_suffix"
 }
 
 confirm_action() {
@@ -304,6 +346,9 @@ fetch_instance_and_volumes() {
             instanceId: $iid,
             state: ($inst.State.Name // "unknown"),
             instanceType: ($inst.InstanceType // null),
+            nameTag: (
+              (($inst.Tags // []) | map(select(.Key == "Name")) | .[0].Value) // null
+            ),
             volumes: (
               [$inst.BlockDeviceMappings[]?
                 | select(.Ebs.VolumeId != null)
@@ -452,12 +497,13 @@ process_instance_ami() {
     local instance_id="$1"
     local preview="$2"
     local result_file="$3"
-    local desc ami_name tag_spec created image_id snap_json utc state vol_count reboot_note
+    local desc ami_name tag_spec created image_id snap_json utc state vol_count reboot_note name_tag
     local create_args=()
 
     utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     desc="Manual final AMI for ${instance_id} at ${utc}"
-    ami_name="$(ami_name_for_instance "$instance_id")"
+    name_tag="$(printf '%s' "$preview" | jq -r '.nameTag // empty' | tr -d '\r')"
+    ami_name="$(ami_name_for_instance "$instance_id" "$name_tag")"
     state="$(printf '%s' "$preview" | jq -r '.state')"
     vol_count="$(printf '%s' "$preview" | jq '.volumes | length')"
 
@@ -471,6 +517,7 @@ process_instance_ami() {
 
     info "  Mode: ami"
     info "  State: $state"
+    info "  Name tag: ${name_tag:-<none>}"
     info "  Attached volumes: $vol_count"
     printf '%s' "$preview" | jq -r '.volumes[] | "    - \(.volumeId) device=\(.device // "-") deleteOnTermination=\(.deleteOnTermination|tostring)"' >&2
     info "  AMI name (generated): $ami_name"

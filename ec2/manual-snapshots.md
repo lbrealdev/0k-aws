@@ -33,7 +33,7 @@ For a full teardown checklist, see [EC2 Elimination](./ec2-elimination.md).
 
 **Not** set by the script as a tag: `Name` or `CreatedBy=<script-name>`.
 
-In AMI mode the script generates the required `create-image --name` value internally (e.g. `final-<instance-id>-<timestamp>`). That is the AMI Name field, not a `Name` tag, and there is no user `--name` flag.
+In AMI mode the script generates the required `create-image --name` value internally from the instance `Name` tag (when present), the instance ID, a UTC `YYYYMMDD-HHMMSS` stamp, and a `-final` suffix — e.g. `web-prod-i-0abc123-20260710-204500-final`. That is the AMI Name field, not a `Name` tag, and there is no user `--name` flag.
 
 Instance correlation belongs in the description and the JSON report.
 
@@ -77,7 +77,7 @@ AMI (AWS reboots a running instance unless `--no-reboot`):
 ```shell
 aws ec2 create-image \
   --instance-id <INSTANCE_ID> \
-  --name "final-<INSTANCE_ID>-$(date -u +%Y%m%dT%H%M%SZ)" \
+  --name "<Name-or-instance-id>-<INSTANCE_ID>-$(date -u +%Y%m%d-%H%M%S)-final" \
   --description "Manual final AMI for <INSTANCE_ID>" \
   --tag-specifications \
     'ResourceType=image,Tags=[{Key=Purpose,Value=manual-final-snapshot}]' \
