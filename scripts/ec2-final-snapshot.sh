@@ -399,7 +399,7 @@ process_instance_volumes() {
     local desc tag_spec created snap_json wait_ids utc state vol_count
     local -a snapshot_ids=()
 
-    utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    utc="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
     desc="Manual final snapshot for ${instance_id} at ${utc}"
     state="$(printf '%s' "$preview" | jq -r '.state')"
     vol_count="$(printf '%s' "$preview" | jq '.volumes | length')"
@@ -500,7 +500,7 @@ process_instance_ami() {
     local desc ami_name tag_spec created image_id snap_json utc state vol_count reboot_note name_tag
     local create_args=()
 
-    utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    utc="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
     desc="Manual final AMI for ${instance_id} at ${utc}"
     name_tag="$(printf '%s' "$preview" | jq -r '.nameTag // empty' | tr -d '\r')"
     ami_name="$(ami_name_for_instance "$name_tag")"
@@ -686,7 +686,7 @@ write_summary() {
         --arg accountId "$ACCOUNT_ID" \
         --arg region "$EFFECTIVE_REGION" \
         --arg profile "$PROFILE" \
-        --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg generatedAt "$(date -u +'%Y-%m-%d %H:%M:%S UTC')" \
         --argjson dryRun "$DRY_RUN" \
         --arg purpose "$DEFAULT_PURPOSE" \
         --arg mode "$MODE" \
@@ -756,7 +756,7 @@ main() {
     fi
 
     if [[ -z "$REPORT_DIR" ]]; then
-        REPORT_DIR="report/ec2-final-snapshot-$(date +%Y%m%d-%H%M%S)"
+        REPORT_DIR="report/ec2-final-snapshot-$(date -u +%Y%m%d-%H%M%S)"
     fi
     REPORT_PATH="$REPORT_DIR"
     mkdir -p "$REPORT_PATH"
