@@ -26,16 +26,18 @@ For a full teardown checklist, see [EC2 Elimination](./ec2-elimination.md).
 
 ## Tagging model
 
-| Mode | Copied from volumes? | Script default | Optional |
-|------|----------------------|----------------|----------|
-| `volumes` | Yes (`--copy-tags-from-source volume`) | `Purpose=manual-final-snapshot` | `--tag Key=Value` |
-| `ami` | No (AMI API limitation) | Same `Purpose` on AMI **and** all backing snapshots | `--tag Key=Value` on AMI + all backing snapshots |
+| Mode | Copied from? | Script default | Optional |
+|------|--------------|----------------|----------|
+| `volumes` | Attached **volumes** (`--copy-tags-from-source volume`) | `Purpose=manual-final-snapshot` | `--tag Key=Value` |
+| `ami` | Source **instance** tags (skips `aws:*`) | Same `Purpose` on AMI **and** all backing snapshots | `--tag Key=Value` on AMI + all backing snapshots |
 
-**Not** set by the script as a tag: `Name` or `CreatedBy=<script-name>`.
+AMI tag precedence: `Purpose` (always) > `--tag` > instance tags. Merged set must stay within AWS’s 50-tag limit.
+
+If the instance has a `Name` tag, it is copied onto the AMI as a tag. That is separate from the AMI Name field generated for `create-image --name`.
 
 In AMI mode the script generates the required `create-image --name` value internally from the instance `Name` tag (when present), a UTC `YYYYMMDD-HHMMSS` stamp, and a `-final` suffix — e.g. `web-prod-20260710-204500-final`. That is the AMI Name field, not a `Name` tag, and there is no user `--name` flag.
 
-Instance correlation belongs in the description and the JSON report (the instance ID is not part of the AMI name).
+Instance correlation also belongs in the description and the JSON report (the instance ID is not part of the AMI name).
 
 ## Retention
 

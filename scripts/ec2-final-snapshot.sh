@@ -68,7 +68,7 @@ Modes:
   volumes (default)  aws ec2 create-snapshots — EBS snapshots of attached volumes
                      (copies volume tags + Purpose=${DEFAULT_PURPOSE})
   ami                aws ec2 create-image — AMI + backing snapshots (relaunchable)
-                     (tags AMI and all backing snapshots with Purpose + optional --tag)
+                     (copies instance tags + Purpose + optional --tag onto AMI and snapshots)
 
 Does NOT terminate or delete resources. Instance must exist.
 
@@ -79,7 +79,7 @@ Optional arguments:
   --mode             volumes (default) or ami
   --region, -r       AWS region
   --profile, -p      AWS profile name
-  --tag Key=Value    Extra tag (repeatable; cannot override Purpose)
+  --tag Key=Value    Extra tag (repeatable; cannot override Purpose; overrides instance tags in AMI mode)
   --dry-run          Preview only; do not create snapshots or AMIs
   --wait             Wait until snapshots/AMI become available
   --no-reboot        AMI mode only: skip reboot (crash-consistent; less safe)
@@ -239,6 +239,53 @@ build_tags_json() {
     printf '%s' "$tags_json"
 }
 
+# Merge instance tags + --tag + Purpose for AMI mode.
+# Precedence: Purpose > --tag > instance tags. Skips aws:* keys. Max 50 tags.
+build_ami_tags_json() {
+    local instance_tags_json="${1:-[]}"
+    local overlay_json='[]'
+    local tags_json count i
+
+    if [[ ${#TAG_KEYS[@]} -gt 0 ]]; then
+        for i in "${!TAG_KEYS[@]}"; do
+            overlay_json="$(jq -c --arg k "${TAG_KEYS[$i]}" --arg v "${TAG_VALUES[$i]}" \
+                '. + [{Key:$k,Value:$v}]' <<< "$overlay_json")"
+        done
+    fi
+
+    tags_json="$(jq -nc \
+        --argjson instance "$instance_tags_json" \
+        --argjson overlay "$overlay_json" \
+        --arg purpose "$DEFAULT_PURPOSE" '
+          (
+            ($instance // [])
+            | map(select(
+                (.Key | type == "string") and (.Key | length > 0) and
+                (.Value | type == "string") and
+                (.Key | startswith("aws:") | not)
+              ))
+            | map({(.Key): .Value})
+            | add // {}
+          ) as $base
+          | (
+              ($overlay // [])
+              | map({(.Key): .Value})
+              | add // {}
+            ) as $over
+          | ($base + $over + {Purpose: $purpose})
+          | to_entries
+          | map({Key: .key, Value: .value})
+          | sort_by(.Key)
+        ')"
+
+    count="$(printf '%s' "$tags_json" | jq 'length')"
+    if [[ "$count" -gt 50 ]]; then
+        error "Merged AMI tags exceed AWS limit of 50 (got ${count})"
+        return 1
+    fi
+    printf '%s' "$tags_json"
+}
+
 build_tag_specifications_volumes() {
     jq -nc --argjson tags "$(build_tags_json)" \
         '[{ResourceType:"snapshot",Tags:$tags}]'
@@ -246,7 +293,8 @@ build_tag_specifications_volumes() {
 
 build_tag_specifications_ami() {
     # Same tags on AMI and all backing snapshots (AWS applies one snapshot tag set to every volume).
-    jq -nc --argjson tags "$(build_tags_json)" \
+    local tags_json="$1"
+    jq -nc --argjson tags "$tags_json" \
         '[
           {ResourceType:"image",Tags:$tags},
           {ResourceType:"snapshot",Tags:$tags}
@@ -262,6 +310,11 @@ format_tags_preview() {
         done
     fi
     printf '%s' "$line"
+}
+
+format_tags_json_preview() {
+    local tags_json="$1"
+    jq -r 'map("\(.Key)=\(.Value)") | join(", ")' <<< "$tags_json"
 }
 
 sanitize_ami_name_component() {
@@ -348,6 +401,9 @@ fetch_instance_and_volumes() {
             instanceType: ($inst.InstanceType // null),
             nameTag: (
               (($inst.Tags // []) | map(select(.Key == "Name")) | .[0].Value) // null
+            ),
+            tags: (
+              [($inst.Tags // [])[] | {Key: .Key, Value: .Value}]
             ),
             volumes: (
               [$inst.BlockDeviceMappings[]?
@@ -498,6 +554,7 @@ process_instance_ami() {
     local preview="$2"
     local result_file="$3"
     local desc ami_name tag_spec created image_id snap_json utc state vol_count reboot_note name_tag
+    local instance_tags_json ami_tags_json tags_preview
     local create_args=()
 
     utc="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
@@ -506,6 +563,14 @@ process_instance_ami() {
     ami_name="$(ami_name_for_instance "$name_tag")"
     state="$(printf '%s' "$preview" | jq -r '.state')"
     vol_count="$(printf '%s' "$preview" | jq '.volumes | length')"
+    instance_tags_json="$(printf '%s' "$preview" | jq -c '.tags // []')"
+
+    if ! ami_tags_json="$(build_ami_tags_json "$instance_tags_json")"; then
+        jq -n --argjson preview "$preview" --arg msg "Merged AMI tags exceed AWS limit of 50" --arg mode "$MODE" \
+            '$preview + {mode:$mode,status:"failed",message:$msg,snapshots:[],ami:null}' > "$result_file"
+        return 1
+    fi
+    tags_preview="$(format_tags_json_preview "$ami_tags_json")"
 
     if [[ "$NO_REBOOT" = true ]]; then
         reboot_note="no-reboot (crash-consistent; filesystem integrity not guaranteed)"
@@ -522,8 +587,8 @@ process_instance_ami() {
     printf '%s' "$preview" | jq -r '.volumes[] | "    - \(.volumeId) device=\(.device // "-") deleteOnTermination=\(.deleteOnTermination|tostring)"' >&2
     info "  AMI name (generated): $ami_name"
     info "  Reboot behavior: $reboot_note"
-    info "  Copy volume tags: no (AMI API limitation; Purpose + --tag applied to AMI and all backing snapshots)"
-    info "  Tags to add: $(format_tags_preview)"
+    info "  Copy instance tags: yes (aws:* skipped; Purpose/--tag win on conflicts)"
+    info "  Tags to add: $tags_preview"
     info "  Description: $desc"
 
     if [[ "$vol_count" -eq 0 ]]; then
@@ -538,7 +603,8 @@ process_instance_ami() {
         jq -n \
             --argjson preview "$preview" \
             --arg desc "$desc" \
-            --arg tags "$(format_tags_preview)" \
+            --arg tags "$tags_preview" \
+            --argjson amiTags "$ami_tags_json" \
             --arg mode "$MODE" \
             --arg amiName "$ami_name" \
             --arg reboot "$reboot_note" \
@@ -549,7 +615,8 @@ process_instance_ami() {
               message:"Preview only; create-image not called",
               description:$desc,
               tagsToAdd:$tags,
-              copyTagsFromSource:null,
+              amiTags:$amiTags,
+              copyTagsFromSource:"instance",
               rebootBehavior:$reboot,
               noReboot:$noReboot,
               snapshots:[],
@@ -565,7 +632,7 @@ process_instance_ami() {
         return 1
     fi
 
-    tag_spec="$(build_tag_specifications_ami)"
+    tag_spec="$(build_tag_specifications_ami "$ami_tags_json")"
     create_args=(
         ec2 create-image
         --instance-id "$instance_id"
@@ -603,6 +670,8 @@ process_instance_ami() {
             jq -n \
                 --argjson preview "$preview" \
                 --argjson snaps "$snap_json" \
+                --argjson amiTags "$ami_tags_json" \
+                --arg tags "$tags_preview" \
                 --arg imageId "$image_id" \
                 --arg amiName "$ami_name" \
                 --arg msg "AMI created but wait failed" \
@@ -613,6 +682,9 @@ process_instance_ami() {
                   mode:$mode,
                   status:"failed",
                   message:$msg,
+                  tagsToAdd:$tags,
+                  amiTags:$amiTags,
+                  copyTagsFromSource:"instance",
                   rebootBehavior:$reboot,
                   noReboot:$noReboot,
                   snapshots:$snaps,
@@ -626,6 +698,8 @@ process_instance_ami() {
     jq -n \
         --argjson preview "$preview" \
         --argjson snaps "$snap_json" \
+        --argjson amiTags "$ami_tags_json" \
+        --arg tags "$tags_preview" \
         --arg desc "$desc" \
         --arg imageId "$image_id" \
         --arg amiName "$ami_name" \
@@ -637,7 +711,9 @@ process_instance_ami() {
           status:"success",
           message:"AMI created",
           description:$desc,
-          copyTagsFromSource:null,
+          tagsToAdd:$tags,
+          amiTags:$amiTags,
+          copyTagsFromSource:"instance",
           rebootBehavior:$reboot,
           noReboot:$noReboot,
           snapshots:$snaps,
@@ -701,7 +777,7 @@ write_summary() {
             dryRun: $dryRun,
             defaultPurpose: $purpose,
             noReboot: $noReboot,
-            copyTagsFromSource: (if $mode == "volumes" then "volume" else null end)
+            copyTagsFromSource: (if $mode == "volumes" then "volume" elif $mode == "ami" then "instance" else null end)
           },
           instances: .
         }' "${RESULT_FILES[@]}")"
