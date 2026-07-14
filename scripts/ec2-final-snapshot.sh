@@ -280,34 +280,34 @@ sanitize_ami_name_component() {
 }
 
 ami_name_for_instance() {
-    local instance_id="$1"
-    local name_tag="${2:-}"
+    local name_tag="${1:-}"
     local stamp sanitized_name fixed_suffix fixed_len max_name_len name_part
     stamp="$(date -u +%Y%m%d-%H%M%S)"
-    fixed_suffix="-${instance_id}-${stamp}-final"
+    fixed_suffix="-${stamp}-final"
     fixed_len="${#fixed_suffix}"
 
-    # AWS AMI name max length is 128. Keep instance id, stamp, and -final intact.
+    # AWS AMI name max length is 128. Keep stamp and -final intact.
+    # Instance ID is omitted from the name (still present in description / report).
     if [[ "$fixed_len" -ge 128 ]]; then
-        printf '%s' "${instance_id}-${stamp}-final" | cut -c1-128
+        printf '%s' "${stamp}-final" | cut -c1-128
         return 0
     fi
 
     sanitized_name="$(sanitize_ami_name_component "$name_tag")"
     if [[ -z "$sanitized_name" ]]; then
-        printf '%s' "${instance_id}-${stamp}-final"
+        printf '%s' "${stamp}-final"
         return 0
     fi
 
     max_name_len=$((128 - fixed_len))
     if [[ "$max_name_len" -lt 1 ]]; then
-        printf '%s' "${instance_id}-${stamp}-final" | cut -c1-128
+        printf '%s' "${stamp}-final" | cut -c1-128
         return 0
     fi
     name_part="$(printf '%s' "$sanitized_name" | cut -c1-"$max_name_len")"
     name_part="$(printf '%s' "$name_part" | sed -E 's/-+$//')"
     if [[ -z "$name_part" ]]; then
-        printf '%s' "${instance_id}-${stamp}-final"
+        printf '%s' "${stamp}-final"
         return 0
     fi
     printf '%s%s' "$name_part" "$fixed_suffix"
@@ -503,7 +503,7 @@ process_instance_ami() {
     utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     desc="Manual final AMI for ${instance_id} at ${utc}"
     name_tag="$(printf '%s' "$preview" | jq -r '.nameTag // empty' | tr -d '\r')"
-    ami_name="$(ami_name_for_instance "$instance_id" "$name_tag")"
+    ami_name="$(ami_name_for_instance "$name_tag")"
     state="$(printf '%s' "$preview" | jq -r '.state')"
     vol_count="$(printf '%s' "$preview" | jq '.volumes | length')"
 
