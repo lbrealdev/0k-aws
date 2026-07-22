@@ -86,4 +86,4 @@ aws ec2 create-image \
     'ResourceType=snapshot,Tags=[{Key=Purpose,Value=manual-final-snapshot}]'
 ```
 
-Prefer the helper for multi-volume sets, tag copy (volumes mode), and consistent reporting. More CLI notes: [`cli/ec2-snapshots.md`](../cli/ec2-snapshots.md), [`cli/ec2-ami.md`](../cli/ec2-ami.md).
+Prefer the helper for multi-volume sets, tag copy (volumes from volumes; instance tags in AMI mode), and consistent reporting. More CLI notes: [`cli/ec2-snapshots.md`](../cli/ec2-snapshots.md), [`cli/ec2-ami.md`](../cli/ec2-ami.md).
