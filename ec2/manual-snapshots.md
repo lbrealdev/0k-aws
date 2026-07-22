@@ -26,16 +26,18 @@ For a full teardown checklist, see [EC2 Elimination](./ec2-elimination.md).
 
 ## Tagging model
 
-| Mode | Copied from volumes? | Script default | Optional |
-|------|----------------------|----------------|----------|
-| `volumes` | Yes (`--copy-tags-from-source volume`) | `Purpose=manual-final-snapshot` | `--tag Key=Value` |
-| `ami` | No (AMI API limitation) | Same `Purpose` on AMI **and** all backing snapshots | `--tag Key=Value` on AMI + all backing snapshots |
+| Mode | Copied from? | Script default | Optional |
+|------|--------------|----------------|----------|
+| `volumes` | Attached **volumes** (`--copy-tags-from-source volume`) | `Purpose=manual-final-snapshot` | `--tag Key=Value` |
+| `ami` | Source **instance** tags (skips `aws:*`) | Same `Purpose` on AMI **and** all backing snapshots | `--tag Key=Value` on AMI + all backing snapshots |
 
-**Not** set by the script as a tag: `Name` or `CreatedBy=<script-name>`.
+AMI tag precedence: `Purpose` (always) > `--tag` > instance tags. Merged set must stay within AWS’s 50-tag limit.
 
-In AMI mode the script generates the required `create-image --name` value internally from the instance `Name` tag (when present), the instance ID, a UTC `YYYYMMDD-HHMMSS` stamp, and a `-final` suffix — e.g. `web-prod-i-0abc123-20260710-204500-final`. That is the AMI Name field, not a `Name` tag, and there is no user `--name` flag.
+If the instance has a `Name` tag, it is copied onto the AMI as a tag. That is separate from the AMI Name field generated for `create-image --name`.
 
-Instance correlation belongs in the description and the JSON report.
+In AMI mode the script generates the required `create-image --name` value internally from the instance `Name` tag (when present), a UTC `YYYYMMDD-HHMMSS` stamp, and a `-final` suffix — e.g. `web-prod-20260710-204500-final`. That is the AMI Name field, not a `Name` tag, and there is no user `--name` flag.
+
+Instance correlation also belongs in the description and the JSON report (the instance ID is not part of the AMI name).
 
 ## Retention
 
@@ -77,11 +79,11 @@ AMI (AWS reboots a running instance unless `--no-reboot`):
 ```shell
 aws ec2 create-image \
   --instance-id <INSTANCE_ID> \
-  --name "<Name-or-instance-id>-<INSTANCE_ID>-$(date -u +%Y%m%d-%H%M%S)-final" \
+  --name "<Name>-$(date -u +%Y%m%d-%H%M%S)-final" \
   --description "Manual final AMI for <INSTANCE_ID>" \
   --tag-specifications \
     'ResourceType=image,Tags=[{Key=Purpose,Value=manual-final-snapshot}]' \
     'ResourceType=snapshot,Tags=[{Key=Purpose,Value=manual-final-snapshot}]'
 ```
 
-Prefer the helper for multi-volume sets, tag copy (volumes mode), and consistent reporting. More CLI notes: [`cli/ec2-snapshots.md`](../cli/ec2-snapshots.md), [`cli/ec2-ami.md`](../cli/ec2-ami.md).
+Prefer the helper for multi-volume sets, tag copy (volumes from volumes; instance tags in AMI mode), and consistent reporting. More CLI notes: [`cli/ec2-snapshots.md`](../cli/ec2-snapshots.md), [`cli/ec2-ami.md`](../cli/ec2-ami.md).

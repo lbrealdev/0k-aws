@@ -261,7 +261,7 @@ Decide retention before terminate:
 ```shell
 aws ec2 create-image \
   --instance-id <INSTANCE_ID> \
-  --name "<Name-or-instance-id>-<INSTANCE_ID>-$(date -u +%Y%m%d-%H%M%S)-final" \
+  --name "<Name>-$(date -u +%Y%m%d-%H%M%S)-final" \
   --description "Final AMI before EC2 elimination" \
   --no-reboot
 ```
