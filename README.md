@@ -19,7 +19,7 @@ Each directory README is the index for its own pages; this file links to section
 
 ## Prerequisites
 
-- [AWS CLI v2](./cli/README.md#install-aws-cli-v2) — install notes and first-time setup
+- [AWS CLI v2](./cli/install.md) — install notes and first-time setup
 - `jq` — required by several scripts
 - [mise](https://mise.jdx.dev/) — optional; `mise.toml` pins Steampipe and provides `mise t` to list the tools installed for this directory
 

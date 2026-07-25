@@ -2,37 +2,9 @@
 
 Universal Command Line Interface for Amazon Web Services.
 
-This directory is a cheat-sheet index for day-to-day `aws` usage. **Convention:** each markdown file maps to an AWS CLI subcommand or service area (`configure` → `aws configure`, `ec2` → `aws ec2`, `s3` → `aws s3`, and so on). This README is the hub for install, setup pointers, and common nuances — not a subcommand page.
+This directory is a cheat-sheet index for day-to-day `aws` usage. **Convention:** each markdown file maps to an AWS CLI subcommand or service area (`configure` → `aws configure`, `ec2` → `aws ec2`, `s3` → `aws s3`, and so on). This README is the hub for setup pointers and common nuances — not a subcommand page.
 
-## Install AWS CLI v2
-
-Prefer **AWS CLI v2**. v1 still exists on PyPI but is legacy; new setups should install v2.
-
-Download the `awscliv2` package (Linux x86_64 example):
-
-```shell
-curl -fsSLo "awscliv2.zip" "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
-```
-
-Extract the installer:
-
-```shell
-unzip -q awscliv2.zip
-```
-
-Run the installer:
-
-```shell
-sudo ./aws/install
-```
-
-Confirm the version:
-
-```shell
-aws --version
-```
-
-For other platforms and updates, see the official [install guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
+Install: see [install.md](./install.md) for AWS CLI v2.
 
 ## First-time setup
 
@@ -95,6 +67,7 @@ The CLI resolves credentials from several sources (environment variables, shared
 
 | Page | CLI area |
 |------|----------|
+| [install](./install.md) | Install AWS CLI v2 |
 | [configure](./configure.md) | `aws configure` |
 | [login](./login.md) | `aws login` / `aws logout` |
 | [sso](./sso.md) | `aws sso` / `aws sso-admin` |
