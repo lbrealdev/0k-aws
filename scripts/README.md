@@ -12,7 +12,7 @@ Convention: prefer **read-only** helpers for inventory/discovery. Write helpers 
 | [`ec2-final-snapshot.sh`](./ec2-final-snapshot.sh) | **Write** | Final backups for live instances: `--mode volumes` (`create-snapshots`, copy volume tags) or `--mode ami` (`create-image`, copy instance tags + Purpose/--tag, reboot by default for running instances); supports `--dry-run` | [Manual snapshots](../ec2/manual-snapshots.md), [EC2 Elimination](../ec2/ec2-elimination.md) |
 | [`list-resources.sh`](./list-resources.sh) | Read-only | List account resources via Resource Groups Tagging API (profiles/regions, optional report) | [List Resources](../list-resources/README.md) |
 | [`s3-bucket-object.sh`](./s3-bucket-object.sh) | Read-only | List S3 buckets and object counts | [cli/s3.md](../cli/s3.md) |
-| [`rds-modify-snapshot.sh`](./rds-modify-snapshot.sh) | **Write** | Batch-modify RDS DB snapshot option groups (supports `--dry-run`) | [RDS Deletion](../databases/rds-deletion.md), [databases/](../databases/README.md) |
+| [`rds-modify-snapshot.sh`](./rds-modify-snapshot.sh) | **Write** | Batch-modify RDS DB snapshot option groups (supports `--dry-run`) | [RDS Deletion](../rds/rds-deletion.md), [rds/](../rds/README.md) |
 
 ## Relationships
 

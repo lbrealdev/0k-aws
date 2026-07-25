@@ -10,9 +10,9 @@ A personal wiki of AWS knowledge: CLI cheat sheets, operational guides, and help
 | [cli/](./cli/README.md) | AWS CLI v2 install, profile/region/pager nuances, one page per `aws` subcommand |
 | [cloudshell/](./cloudshell/README.md) | Persistent tooling (mise, just) in the CloudShell environment |
 | [ec2/](./ec2/README.md) | Inventory, manual/final snapshots, safe elimination |
-| [databases/](./databases/README.md) | RDS deletion considerations and checklist |
+| [rds/](./rds/README.md) | RDS deletion considerations and checklist |
 | [list-resources/](./list-resources/README.md) | Account-wide discovery: AWS Config, Cloud Control API, CDK, Steampipe |
-| [developer-tools/](./developer-tools/README.md) | CodeCommit, CodeBuild, CodePipeline, reporting scripts |
+| [dev-tools/](./dev-tools/README.md) | CodeCommit, CodeBuild, CodePipeline, reporting scripts |
 | [scripts/](./scripts/README.md) | Helper scripts, each marked read-only or write |
 
 Each directory README is the index for its own pages; this file links to sections only.
