@@ -116,7 +116,7 @@ The CLI resolves credentials from several sources (environment variables, shared
 | [codedeploy](./codedeploy.md) | `aws codedeploy` |
 | [codepipeline](./codepipeline.md) | `aws codepipeline` |
 
-Also see the [root README](../README.md) TOC for the full wiki index.
+Also see the [root README](../README.md) for the other sections of the wiki.
 
 ## References
 
