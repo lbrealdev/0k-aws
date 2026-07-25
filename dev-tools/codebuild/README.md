@@ -4,4 +4,4 @@ AWS CodeBuild is a fully-managed continuous integration service that compiles so
 
 ## Related
 
-- [CLI Commands - CodeBuild](../cli/codebuild.md)
+- [CLI Commands - CodeBuild](../../cli/codebuild.md)

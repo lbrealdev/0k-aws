@@ -860,7 +860,7 @@ print_completion_summary() {
     info "Report saved to: $REPORT_PATH"
     info "Format: $(printf '%s' "$FORMAT" | tr '[:lower:]' '[:upper:]')"
     info "Resources: $counts"
-    info "See ec2/ec2-elimination.md for the elimination checklist"
+    info "See ec2/elimination.md for the elimination checklist"
 }
 
 print_banner() {

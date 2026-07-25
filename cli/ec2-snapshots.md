@@ -11,5 +11,5 @@ aws ec2 describe-snapshots \
 
 ## Related
 
-- [EC2 Elimination](../ec2/ec2-elimination.md) — snapshots vs AMIs vs AWS Backup vs DLM
+- [EC2 Elimination](../ec2/elimination.md) — snapshots vs AMIs vs AWS Backup vs DLM
 - [`scripts/ec2-inventory.sh`](../scripts/ec2-inventory.sh) — JSON/CSV report of snapshots related to specific instance IDs

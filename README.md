@@ -1,142 +1,35 @@
 # 0k-aws
 
-A personal wiki of AWS knowledge. CLI commands, practical tips, and lessons learned from real-world usage.
+A personal wiki of AWS knowledge: CLI cheat sheets, operational guides, and helper scripts, collected from real-world usage.
 
-<!-- TOC -->
+## Sections
 
-- [AWS Auth](#aws-auth)
-  - [Overview](./aws-auth/README.md)
-  - [IAM User](./aws-auth/iam-user.md)
-  - [AWS SSO](./aws-auth/aws-sso.md)
-  - [IAM Identity Center](./aws-auth/iam-identity-center.md)
-- [CLI](#cli)
-  - [Overview](./cli/README.md)
-  - [Configure](./cli/configure.md)
-  - [CodeArtifact](./cli/codeartifact.md)
-  - [CodeBuild](./cli/codebuild.md)
-  - [CodeCommit](./cli/codecommit.md)
-  - [CodeDeploy](./cli/codedeploy.md)
-  - [CodePipeline](./cli/codepipeline.md)
-  - [EC2](./cli/ec2.md)
-  - [EC2 AMI](./cli/ec2-ami.md)
-  - [EC2 Snapshots](./cli/ec2-snapshots.md)
-  - [Security Groups](./cli/security-groups.md)
-  - [Security Hub](./cli/securityhub.md)
-  - [Secrets Manager](./cli/secrets-manager.md)
-  - [VPC](./cli/vpc.md)
-  - [EKS](./cli/eks.md)
-  - [IAM](./cli/iam.md)
-  - [OpenSearch](./cli/opensearch.md)
-  - [S3](./cli/s3.md)
-  - [STS](./cli/sts.md)
-  - [SSO](./cli/sso.md)
-  - [Login](./cli/login.md)
-- [AWS CloudShell](#aws-cloudshell)
-  - [Overview](./aws-cloudshell/README.md)
-- [Databases](#databases)
-  - [Overview](./databases/README.md)
-  - [RDS Deletion](./databases/rds-deletion.md)
-- [EC2](#ec2)
-  - [Overview](./ec2/README.md)
-  - [Manual / final snapshots](./ec2/manual-snapshots.md)
-  - [EC2 Elimination](./ec2/ec2-elimination.md)
-- [AWS List Resources](#aws-list-resources)
-  - [Overview](./aws-list-resources/README.md)
-  - [AWS Config](./aws-list-resources/aws-config.md)
-  - [Cloud Control API](./aws-list-resources/aws-cloud-control-api.md)
-  - [AWS CDK](./aws-list-resources/aws-cdk.md)
-  - [Steampipe](./aws-list-resources/tools/steampipe.md)
-- [AWS Developer Tools](#aws-developer-tools)
-  - [Overview](./developer-tools/README.md)
-  - [CodeCommit](./developer-tools/codecommit/README.md)
-  - [CodeBuild](./developer-tools/codebuild/README.md)
-  - [CodePipeline](./developer-tools/codepipeline/README.md)
-- [Scripts](#scripts)
-  - [Overview](./scripts/README.md)
-  - [ec2-inventory.sh](./scripts/ec2-inventory.sh)
-  - [ec2-final-snapshot.sh](./scripts/ec2-final-snapshot.sh)
-  - [rds-modify-snapshot.sh](./scripts/rds-modify-snapshot.sh)
-  - [s3-bucket-object.sh](./scripts/s3-bucket-object.sh)
-  - [list-resources.sh](./scripts/list-resources.sh)
+| Section | What's inside |
+|---------|---------------|
+| [auth/](./auth/README.md) | IAM users, AWS SSO, IAM Identity Center |
+| [cli/](./cli/README.md) | AWS CLI v2 install, profile/region/pager nuances, one page per `aws` subcommand |
+| [cloudshell/](./cloudshell/README.md) | Persistent tooling (mise, just) in the CloudShell environment |
+| [ec2/](./ec2/README.md) | Inventory, manual/final snapshots, safe elimination |
+| [rds/](./rds/README.md) | RDS deletion considerations and checklist |
+| [list-resources/](./list-resources/README.md) | Account-wide discovery: AWS Config, Cloud Control API, CDK, Steampipe |
+| [dev-tools/](./dev-tools/README.md) | CodeCommit, CodeBuild, CodePipeline, reporting scripts |
+| [scripts/](./scripts/README.md) | Helper scripts, each marked read-only or write |
 
----
+Each directory README is the index for its own pages; this file links to sections only.
 
-## AWS Auth
+## Prerequisites
 
-Methods for authenticating with AWS.
+- [AWS CLI v2](./cli/install/README.md) — install notes and first-time setup
+- `jq` — required by several scripts
+- [mise](https://mise.jdx.dev/) — optional; `mise.toml` pins Steampipe and provides `mise t` to list the tools installed for this directory
 
-See [aws-auth/README.md](./aws-auth/README.md) for the section index.
+## Running the scripts
 
-- [IAM User](./aws-auth/iam-user.md) — long-term credentials.
-- [AWS SSO](./aws-auth/aws-sso.md) — SSO / IAM Identity Center for multi-account access.
-- [IAM Identity Center](./aws-auth/iam-identity-center.md) — Identity Center references and instance types.
+Write scripts are marked **write** in [scripts/README.md](./scripts/README.md) and support `--dry-run` where practical. Run them with `--dry-run` first, and pass an explicit `--profile` / `--region` rather than relying on shell defaults.
 
----
+## Conventions
 
-## CLI
-
-AWS CLI install notes, everyday nuances, and command cheat sheets. Each page under `cli/` maps to an `aws` subcommand or service area; see [cli/README.md](./cli/README.md) for the section hub.
-
----
-
-## AWS CloudShell
-
-Tooling tips for the AWS CloudShell environment.
-
-See [aws-cloudshell/README.md](./aws-cloudshell/README.md) for the section index.
-
----
-
-## Databases
-
-Operational guides for AWS database services.
-
-See [databases/README.md](./databases/README.md) for the section index.
-
-- [RDS Deletion](./databases/rds-deletion.md) — considerations and checklist for deleting an RDS instance.
-
----
-
-## EC2
-
-Operational guides and good practices for day-to-day Amazon EC2 work — inventory, backups, and cleanup.
-
-See [ec2/README.md](./ec2/README.md) for the section index.
-
-- [Manual / final snapshots](./ec2/manual-snapshots.md) — intentional EBS snapshots before risky or destructive changes.
-- [EC2 Elimination](./ec2/ec2-elimination.md) — inventory volumes, snapshots, AMIs, DLM, and AWS Backup before removing EC2 resources.
-
----
-
-## AWS List Resources
-
-Approaches and tools for discovering resources across an AWS account.
-
-See [aws-list-resources/README.md](./aws-list-resources/README.md) for the section index.
-
-- [AWS Config](./aws-list-resources/aws-config.md) — inventory via AWS Config.
-- [Cloud Control API](./aws-list-resources/aws-cloud-control-api.md) — list resources with Cloud Control.
-- [AWS CDK](./aws-list-resources/aws-cdk.md) — CDK-related resource listing notes.
-- [Steampipe](./aws-list-resources/tools/steampipe.md) — query AWS with Steampipe.
-
----
-
-## AWS Developer Tools
-
-AWS Developer Tools is a set of services designed to help developers build, test, deploy, and manage applications on AWS.
-
-See [developer-tools/README.md](./developer-tools/README.md) for more details.
-
----
-
-## Scripts
-
-Helper scripts for common operational tasks.
-
-See [scripts/README.md](./scripts/README.md) for the section index (purpose, read-only vs write, related docs).
-
-- [`scripts/ec2-inventory.sh`](./scripts/ec2-inventory.sh) — read-only, instance-scoped inventory (volumes, snapshots, AMIs, DLM, Backup).
-- [`scripts/ec2-final-snapshot.sh`](./scripts/ec2-final-snapshot.sh) — create manual/final EBS snapshots or AMIs (**write**; `--mode volumes|ami`).
-- [`scripts/rds-modify-snapshot.sh`](./scripts/rds-modify-snapshot.sh) — batch-modify RDS DB snapshot option groups (**write**).
-- [`scripts/s3-bucket-object.sh`](./scripts/s3-bucket-object.sh) — list object counts per S3 bucket.
-- [`scripts/list-resources.sh`](./scripts/list-resources.sh) — list account resources across profiles/regions.
+- Every directory has a `README.md` that indexes its pages.
+- Each page under `cli/` maps to an `aws` subcommand or service area.
+- Link lists use a markdown link to the page, followed by an em dash and a short description.
+- Commits follow [Conventional Commits](https://www.conventionalcommits.org/), for example `docs(ec2):` or `feat(scripts):`.

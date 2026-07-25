@@ -4,4 +4,4 @@ AWS CodePipeline is a fully-managed continuous delivery service that automates r
 
 ## Related
 
-- [CLI Commands - CodePipeline](../cli/codepipeline.md)
+- [CLI Commands - CodePipeline](../../cli/codepipeline.md)
