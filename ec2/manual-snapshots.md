@@ -2,7 +2,7 @@
 
 Intentional backups before a destructive or hard-to-reverse EC2 change — decommission, volume replace, migration, or a risky config change. This is a day-to-day ops practice; elimination is one consumer of it.
 
-For a full teardown checklist, see [EC2 Elimination](./ec2-elimination.md).
+For a full teardown checklist, see [EC2 Elimination](./elimination.md).
 
 ## When to take them
 

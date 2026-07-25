@@ -1,10 +1,10 @@
-# Databases
+# RDS
 
-Operational guides for AWS database services.
+Operational guides for Amazon RDS.
 
 ## Guides
 
-- [RDS Deletion](./rds-deletion.md) — considerations and checklist for deleting a manually-created RDS instance
+- [RDS Deletion](./deletion.md) — considerations and checklist for deleting a manually-created RDS instance
 
 ## Related Scripts
 

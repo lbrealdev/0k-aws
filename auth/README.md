@@ -3,7 +3,7 @@
 Methods for authenticating with AWS:
 
 - [IAM User](./iam-user.md) — long-term credentials
-- [AWS SSO](./aws-sso.md) — SSO / IAM Identity Center for multi-account access, recommended for organizations
+- [AWS SSO](./sso.md) — SSO / IAM Identity Center for multi-account access, recommended for organizations
 - [IAM Identity Center](./iam-identity-center.md) — Identity Center references and instance types
 
 ## Related CLI references
