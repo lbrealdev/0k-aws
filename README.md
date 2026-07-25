@@ -6,12 +6,12 @@ A personal wiki of AWS knowledge: CLI cheat sheets, operational guides, and help
 
 | Section | What's inside |
 |---------|---------------|
-| [aws-auth/](./aws-auth/README.md) | IAM users, AWS SSO, IAM Identity Center |
+| [auth/](./auth/README.md) | IAM users, AWS SSO, IAM Identity Center |
 | [cli/](./cli/README.md) | AWS CLI v2 install, profile/region/pager nuances, one page per `aws` subcommand |
-| [aws-cloudshell/](./aws-cloudshell/README.md) | Persistent tooling (mise, just) in the CloudShell environment |
+| [cloudshell/](./cloudshell/README.md) | Persistent tooling (mise, just) in the CloudShell environment |
 | [ec2/](./ec2/README.md) | Inventory, manual/final snapshots, safe elimination |
 | [databases/](./databases/README.md) | RDS deletion considerations and checklist |
-| [aws-list-resources/](./aws-list-resources/README.md) | Account-wide discovery: AWS Config, Cloud Control API, CDK, Steampipe |
+| [list-resources/](./list-resources/README.md) | Account-wide discovery: AWS Config, Cloud Control API, CDK, Steampipe |
 | [developer-tools/](./developer-tools/README.md) | CodeCommit, CodeBuild, CodePipeline, reporting scripts |
 | [scripts/](./scripts/README.md) | Helper scripts, each marked read-only or write |
 

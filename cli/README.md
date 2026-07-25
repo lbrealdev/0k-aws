@@ -14,7 +14,7 @@ After install, configure credentials and defaults, then authenticate the way you
 - [login](./login.md) — `aws login` / `aws logout`
 - [SSO](./sso.md) — SSO admin / Identity Center related commands
 - [STS](./sts.md) — caller identity and temporary credentials
-- Broader auth methods: [aws-auth/](../aws-auth/README.md)
+- Broader auth methods: [auth/](../auth/README.md)
 
 ## Everyday nuances
 
