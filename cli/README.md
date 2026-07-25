@@ -4,7 +4,7 @@ Universal Command Line Interface for Amazon Web Services.
 
 This directory is a cheat-sheet index for day-to-day `aws` usage. **Convention:** each markdown file maps to an AWS CLI subcommand or service area (`configure` → `aws configure`, `ec2` → `aws ec2`, `s3` → `aws s3`, and so on). This README is the hub for setup pointers and common nuances — not a subcommand page.
 
-Install: see [install.md](./install.md) for AWS CLI v2.
+Install: see [install/](./install/README.md) for AWS CLI v2.
 
 ## First-time setup
 
@@ -67,7 +67,7 @@ The CLI resolves credentials from several sources (environment variables, shared
 
 | Page | CLI area |
 |------|----------|
-| [install](./install.md) | Install AWS CLI v2 |
+| [install](./install/README.md) | Install AWS CLI v2 |
 | [configure](./configure.md) | `aws configure` |
 | [login](./login.md) | `aws login` / `aws logout` |
 | [sso](./sso.md) | `aws sso` / `aws sso-admin` |
