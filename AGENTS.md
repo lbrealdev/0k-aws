@@ -1,7 +1,5 @@
 # 0k-aws — Development Guide
 
-Conventions for humans and Cursor working in this repository.
-
 ## Project Overview
 
 **Repo:** `lbrealdev/0k-aws`
