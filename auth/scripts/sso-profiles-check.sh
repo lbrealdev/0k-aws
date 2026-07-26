@@ -6,6 +6,9 @@ AWS_CREDENTIALS_FILE="$HOME/.aws/credentials"
 AWS_CONFIG_FILE="$HOME/.aws/config"
 AWS_ENV_VARS=("AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN")
 
+TMPFILE=""
+trap 'rm -f "$TMPFILE"' EXIT
+
 echo "#========================================#"
 echo "#     AWS SSO PROFILES CHECK SCRIPT      #"
 echo "#========================================#"
@@ -30,7 +33,13 @@ check_aws_cli() {
         log_error "AWS CLI is not installed or not in PATH"
         exit 1
     fi
-    log_ok "AWS CLI: $(aws --version 2>&1 | grep -oP "aws-cli/\d+\.\d+\.\d+" || echo "installed")"
+    local ver
+    ver=$(aws --version 2>&1)
+    if [[ "$ver" =~ aws-cli/([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+        log_ok "AWS CLI: aws-cli/${BASH_REMATCH[1]}"
+    else
+        log_ok "AWS CLI: installed"
+    fi
 }
 
 _mask() {
@@ -70,13 +79,12 @@ check_aws_env_vars() {
 check_sso_session() {
     log_info "Verifying AWS SSO session..."
 
-    if ! aws sts get-caller-identity &> /dev/null; then
+    local identity
+    if ! identity=$(aws sts get-caller-identity --query "Arn" --output text 2>/dev/null); then
         log_error "No active SSO session. Please run 'aws sso login' and try again."
         exit 1
     fi
 
-    local identity
-    identity=$(aws sts get-caller-identity --query "Arn" --output text 2>/dev/null)
     log_ok "SSO session active: $identity"
 }
 
@@ -90,8 +98,10 @@ get_profiles_from_config() {
 
     while IFS= read -r line; do
         line=$(echo "$line" | tr -d '\r')
-        local profile_name
-        profile_name=$(echo "$line" | grep -oP '^\[profile\s+\K[^\]]+' || true)
+        local profile_name=""
+        if [[ "$line" =~ ^\[profile[[:space:]]+([^\]]+)\] ]]; then
+            profile_name="${BASH_REMATCH[1]}"
+        fi
         if [ -n "$profile_name" ] && [ "$profile_name" != "default" ]; then
             profiles+=("$profile_name")
         fi
@@ -220,9 +230,8 @@ main() {
     local success_count=0
     local failure_count=0
 
-    local tmpfile
-    tmpfile=$(mktemp)
-    echo "$all_profiles" > "$tmpfile"
+    TMPFILE=$(mktemp)
+    echo "$all_profiles" > "$TMPFILE"
 
     while IFS= read -r profile || [ -n "$profile" ]; do
         [ -z "$profile" ] && continue
@@ -239,11 +248,12 @@ main() {
             export AWS_PROFILE="$profile"
             local account_id
             account_id=$(aws configure get sso_account_id 2>/dev/null) || account_id="<unknown>"
-            printf "${RED}[FAIL]${RESET} %-12s | %-20s | %s - failed to authenticate\n" "$account_id" "$profile" "$profile"
+            printf "${RED}[FAIL]${RESET} %-12s | %-20s | %s - failed to authenticate\n" "$account_id" "<no-alias>" "$profile"
         fi
-    done < "$tmpfile"
+    done < "$TMPFILE"
 
-    rm -f "$tmpfile"
+    rm -f "$TMPFILE"
+    TMPFILE=""
 
     echo ""
     echo "---"
