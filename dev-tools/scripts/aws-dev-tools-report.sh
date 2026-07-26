@@ -2,23 +2,44 @@
 
 set -euo pipefail
 
-# Parse arguments
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Generate CSV reports for AWS developer tools (CodeCommit, CodeArtifact,
+CodeBuild, CodeDeploy, CodePipeline) in the current account.
+
+Options:
+  --xlsx             Convert CSV reports to a single XLSX (requires uv)
+  --help, -h         Show this help message
+
+EOF
+}
+
 XLSX_MODE=false
-if [ $# -gt 0 ] && [ "$1" = "--xlsx" ]; then
-    XLSX_MODE=true
-fi
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --xlsx)
+            XLSX_MODE=true
+            shift
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Error: unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
 
 # Array to track generated reports
 generated=()
 
 TIMESTAMP=$(date '+%Y%m%d%H%M%S')
 REPORT_DIR="aws_report_$(date '+%Y%m%d')"
-
-
-check_aws_cli() {
-  if !
-}
-
 
 echo "############################################"
 echo "#   AWS Developer Tools Report Generator   #"

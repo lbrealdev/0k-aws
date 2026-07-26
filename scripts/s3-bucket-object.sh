@@ -2,6 +2,20 @@
 
 set -euo pipefail
 
+usage() {
+  cat << EOF
+Usage: $0 [OPTIONS]
+
+List S3 buckets and object counts in the current AWS account (read-only).
+
+Requires: aws CLI, jq
+
+Options:
+  --help, -h         Show this help message
+
+EOF
+}
+
 check_dependencies() {
   if ! command -v aws > /dev/null; then
     echo "Error: aws-cli is not installed or not in PATH."
@@ -41,6 +55,20 @@ get_bucket_objects() {
 }
 
 main() {
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --help|-h)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Error: unknown option: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+    esac
+  done
+
   echo "################################"
   echo "#    AWS S3 BUCKETS OBJECTS    #"
   echo "################################"
@@ -51,4 +79,4 @@ main() {
   get_bucket_objects
 }
 
-main
+main "$@"
