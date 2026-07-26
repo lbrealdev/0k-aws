@@ -2,8 +2,6 @@
 
 A personal wiki of AWS knowledge: CLI cheat sheets, operational guides, and helper scripts, collected from real-world usage.
 
-## Sections
-
 | Section | What's inside |
 |---------|---------------|
 | [auth/](./auth/README.md) | IAM users, AWS SSO, IAM Identity Center |
