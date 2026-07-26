@@ -17,12 +17,6 @@ A personal wiki of AWS knowledge: CLI cheat sheets, operational guides, and help
 
 Each directory README is the index for its own pages; this file links to sections only.
 
-## Prerequisites
-
-- [AWS CLI v2](./cli/install/README.md) — install notes and first-time setup
-- `jq` — required by several scripts
-- [mise](https://mise.jdx.dev/) — optional; `mise.toml` pins Steampipe and provides `mise t` to list the tools installed for this directory
-
 ## Running the scripts
 
 Write scripts are marked **write** in [scripts/README.md](./scripts/README.md) and support `--dry-run` where practical. Run them with `--dry-run` first, and pass an explicit `--profile` / `--region` rather than relying on shell defaults.
