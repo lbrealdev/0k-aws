@@ -2,8 +2,6 @@
 
 ## Project Overview
 
-**Repo:** `lbrealdev/0k-aws`
-
 A personal wiki of AWS knowledge: CLI cheat sheets, operational guides, and helper scripts, collected from real-world usage.
 
 ## Git Conventions
