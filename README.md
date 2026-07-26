@@ -15,8 +15,6 @@ A personal wiki of AWS knowledge: CLI cheat sheets, operational guides, and help
 | [dev-tools/](./dev-tools/README.md) | CodeCommit, CodeBuild, CodePipeline, reporting scripts |
 | [scripts/](./scripts/README.md) | Helper scripts, each marked read-only or write |
 
-Each directory README is the index for its own pages; this file links to sections only.
-
 ## Running the scripts
 
 Write scripts are marked **write** in [scripts/README.md](./scripts/README.md) and support `--dry-run` where practical. Run them with `--dry-run` first, and pass an explicit `--profile` / `--region` rather than relying on shell defaults.
