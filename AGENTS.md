@@ -1,9 +1,5 @@
 # 0k-aws — Development Guide
 
-## Project Overview
-
-A personal wiki of AWS knowledge: CLI cheat sheets, operational guides, and helper scripts, collected from real-world usage.
-
 ## Git Conventions
 
 - Branch from `main`; do not commit or push directly to `main`
@@ -18,4 +14,4 @@ A personal wiki of AWS knowledge: CLI cheat sheets, operational guides, and help
 - Every `*.sh` must support `--help` / `-h` (print usage and exit 0)
 - Prefer read-only helpers for inventory and discovery
 - Write scripts should support `--dry-run` where practical and make side effects obvious
-- Prefer explicit `--profile` / `--region` over relying on shell defaults
+- For AWS CLI scripts, prefer explicit `--profile` / `--region` over relying on shell defaults
