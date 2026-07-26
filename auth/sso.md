@@ -78,11 +78,4 @@ aws sts get-caller-identity --profile account-a
 
 ## Scripts
 
-- [`auth/scripts/sso-profiles-check.sh`](./scripts/sso-profiles-check.sh) — validate local SSO profiles can authenticate
-
-## Related references
-
-- [Configuring the AWS CLI to use IAM Identity Center](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html)
-- [IAM Identity Center User Guide](https://docs.aws.amazon.com/singlesignon/latest/userguide/what-is.html)
-- [AWS IAM Identity Center FAQs](https://aws.amazon.com/iam/identity-center/faqs/)
-- [IAM Identity Center](./iam-identity-center.md) — instance types and enablement refs
+- [`sso-profiles-check.sh`](./scripts/sso-profiles-check.sh) — validate local SSO profiles can authenticate
