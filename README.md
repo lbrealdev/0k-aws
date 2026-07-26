@@ -26,10 +26,3 @@ Each directory README is the index for its own pages; this file links to section
 ## Running the scripts
 
 Write scripts are marked **write** in [scripts/README.md](./scripts/README.md) and support `--dry-run` where practical. Run them with `--dry-run` first, and pass an explicit `--profile` / `--region` rather than relying on shell defaults.
-
-## Conventions
-
-- Every directory has a `README.md` that indexes its pages.
-- Each page under `cli/` maps to an `aws` subcommand or service area.
-- Link lists use a markdown link to the page, followed by an em dash and a short description.
-- Commits follow [Conventional Commits](https://www.conventionalcommits.org/), for example `docs(ec2):` or `feat(scripts):`.
