@@ -9,16 +9,23 @@ AWS_ENV_VARS=("AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN")
 TMPFILE=""
 trap 'rm -f "$TMPFILE"' EXIT
 
-echo "#========================================#"
-echo "#     AWS SSO PROFILES CHECK SCRIPT      #"
-echo "#========================================#"
-echo ""
-
 if [ -t 1 ]; then
   GREEN="\e[32m"; YELLOW="\e[33m"; BLUE="\e[34m"; RED="\e[31m"; GRAY="\e[90m"; RESET="\e[0m"
 else
   GREEN=""; YELLOW=""; BLUE=""; RED=""; GRAY=""; RESET=""
 fi
+
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Validate local AWS SSO profiles can authenticate (STS + account alias).
+
+Options:
+  --help, -h         Show this help message
+
+EOF
+}
 
 now() { date +"%Y-%m-%d %H:%M:%S"; }
 
@@ -189,6 +196,25 @@ validate_profile() {
 }
 
 main() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            *)
+                echo "Error: unknown option: $1" >&2
+                usage >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    echo "#========================================#"
+    echo "#     AWS SSO PROFILES CHECK SCRIPT      #"
+    echo "#========================================#"
+    echo ""
+
     check_aws_cli
     check_aws_env_vars
     check_sso_session
