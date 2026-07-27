@@ -222,6 +222,21 @@ validate_profile() {
     return 0
 }
 
+_col_width() {
+    local current="$1"
+    local value="$2"
+    local len=${#value}
+    if [ "$len" -gt "$current" ]; then
+        echo "$len"
+    else
+        echo "$current"
+    fi
+}
+
+_dashes() {
+    printf '%*s' "$1" '' | tr ' ' '-'
+}
+
 run_check_config() {
     log_info "Inspecting SSO profiles in $AWS_CONFIG_FILE (no login)..."
 
@@ -241,25 +256,65 @@ run_check_config() {
     local profile_count
     profile_count=$(printf '%s\n' "$rows" | grep -c . || true)
 
+    local h_profile="PROFILE"
+    local h_method="METHOD"
+    local h_account="ACCOUNT"
+    local h_session="SESSION/ROLE"
+    local h_detail="DETAIL"
+
+    local w_profile=${#h_profile}
+    local w_method=${#h_method}
+    local w_account=${#h_account}
+    local w_session=${#h_session}
+    local w_detail=${#h_detail}
+
+    local display_rows=""
+    while IFS= read -r row || [ -n "$row" ]; do
+        [ -z "$row" ] && continue
+        local name method session account role detail col4
+        IFS='|' read -r name method session account role <<< "$row"
+        account="${account:-<unset>}"
+        if [ "$method" = "session" ]; then
+            col4="${session:-<unset>}"
+            detail="sso_session=$session"
+        else
+            col4="${role:-<unset>}"
+            detail="sso_role_name=${role:-<unset>}"
+        fi
+        w_profile=$(_col_width "$w_profile" "$name")
+        w_method=$(_col_width "$w_method" "$method")
+        w_account=$(_col_width "$w_account" "$account")
+        w_session=$(_col_width "$w_session" "$col4")
+        w_detail=$(_col_width "$w_detail" "$detail")
+        display_rows+="${name}|${method}|${account}|${col4}|${detail}"$'\n'
+    done <<< "$rows"
+
     log_ok "Found $profile_count SSO profile(s)"
     echo ""
-    printf "%-20s | %-8s | %-16s | %-14s | %s\n" "PROFILE" "METHOD" "ACCOUNT" "SESSION/ROLE" "DETAIL"
-    printf "%-20s-+-%-8s-+-%-16s-+-%-14s-+-%s\n" "--------------------" "--------" "----------------" "--------------" "------"
+    printf "%-*s | %-*s | %-*s | %-*s | %-*s\n" \
+        "$w_profile" "$h_profile" \
+        "$w_method" "$h_method" \
+        "$w_account" "$h_account" \
+        "$w_session" "$h_session" \
+        "$w_detail" "$h_detail"
+    printf "%s-+-%s-+-%s-+-%s-+-%s\n" \
+        "$(_dashes "$w_profile")" \
+        "$(_dashes "$w_method")" \
+        "$(_dashes "$w_account")" \
+        "$(_dashes "$w_session")" \
+        "$(_dashes "$w_detail")"
 
     while IFS= read -r row || [ -n "$row" ]; do
         [ -z "$row" ] && continue
-        local name method session account role detail
-        IFS='|' read -r name method session account role <<< "$row"
-        if [ "$method" = "session" ]; then
-            detail="sso_session=$session"
-            printf "%-20s | %-8s | %-16s | %-14s | %s\n" \
-                "$name" "$method" "${account:-<unset>}" "${session:-<unset>}" "$detail"
-        else
-            detail="sso_role_name=${role:-<unset>}"
-            printf "%-20s | %-8s | %-16s | %-14s | %s\n" \
-                "$name" "$method" "${account:-<unset>}" "${role:-<unset>}" "$detail"
-        fi
-    done <<< "$rows"
+        local name method account col4 detail
+        IFS='|' read -r name method account col4 detail <<< "$row"
+        printf "%-*s | %-*s | %-*s | %-*s | %-*s\n" \
+            "$w_profile" "$name" \
+            "$w_method" "$method" \
+            "$w_account" "$account" \
+            "$w_session" "$col4" \
+            "$w_detail" "$detail"
+    done <<< "$display_rows"
 
     echo ""
     echo "---"
