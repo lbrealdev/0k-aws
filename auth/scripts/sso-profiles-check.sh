@@ -354,6 +354,10 @@ run_validate() {
 
     local success_count=0
     local failure_count=0
+    local w_account=0
+    local w_alias=0
+    local w_profile=0
+    local display_rows=""
 
     TMPFILE=$(mktemp)
     printf '%s\n' "$rows" > "$TMPFILE"
@@ -363,23 +367,44 @@ run_validate() {
         local profile method session account_cfg role
         IFS='|' read -r profile method session account_cfg role <<< "$row"
 
+        local status account_id alias message
         local result
         if result=$(validate_profile "$profile"); then
             success_count=$((success_count + 1))
-            local account_id alias
+            status="OK"
             account_id=$(echo "$result" | cut -d'|' -f1)
             alias=$(echo "$result" | cut -d'|' -f2)
-            printf "${GREEN}[OK]${RESET} %-12s | %-20s | %s - authenticated successfully\n" "$account_id" "$alias" "$profile"
+            message="authenticated successfully"
         else
             failure_count=$((failure_count + 1))
-            local account_id="${account_cfg:-<unknown>}"
+            status="FAIL"
+            account_id="${account_cfg:-<unknown>}"
             [ -z "$account_id" ] && account_id="<unknown>"
-            printf "${RED}[FAIL]${RESET} %-12s | %-20s | %s - failed to authenticate\n" "$account_id" "<no-alias>" "$profile"
+            alias="<no-alias>"
+            message="failed to authenticate"
         fi
+
+        w_account=$(_col_width "$w_account" "$account_id")
+        w_alias=$(_col_width "$w_alias" "$alias")
+        w_profile=$(_col_width "$w_profile" "$profile")
+        display_rows+="${status}|${account_id}|${alias}|${profile}|${message}"$'\n'
     done < "$TMPFILE"
 
     rm -f "$TMPFILE"
     TMPFILE=""
+
+    while IFS= read -r row || [ -n "$row" ]; do
+        [ -z "$row" ] && continue
+        local status account_id alias profile message
+        IFS='|' read -r status account_id alias profile message <<< "$row"
+        if [ "$status" = "OK" ]; then
+            printf "${GREEN}%-6s${RESET} %-*s | %-*s | %-*s - %s\n" \
+                "[OK]" "$w_account" "$account_id" "$w_alias" "$alias" "$w_profile" "$profile" "$message"
+        else
+            printf "${RED}%-6s${RESET} %-*s | %-*s | %-*s - %s\n" \
+                "[FAIL]" "$w_account" "$account_id" "$w_alias" "$alias" "$w_profile" "$profile" "$message"
+        fi
+    done <<< "$display_rows"
 
     echo ""
     echo "---"
