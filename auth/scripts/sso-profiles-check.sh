@@ -2,12 +2,14 @@
 
 set -euo pipefail
 
-AWS_CREDENTIALS_FILE="$HOME/.aws/credentials"
-AWS_CONFIG_FILE="$HOME/.aws/config"
+AWS_CREDENTIALS_FILE="${AWS_SHARED_CREDENTIALS_FILE:-$HOME/.aws/credentials}"
+AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
 AWS_ENV_VARS=("AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN")
 
 TMPFILE=""
 trap 'rm -f "$TMPFILE"' EXIT
+
+CHECK_CONFIG=false
 
 if [ -t 1 ]; then
   GREEN="\e[32m"; YELLOW="\e[33m"; BLUE="\e[34m"; RED="\e[31m"; GRAY="\e[90m"; RESET="\e[0m"
@@ -19,9 +21,11 @@ usage() {
     cat << EOF
 Usage: $0 [OPTIONS]
 
-Validate local AWS SSO profiles can authenticate (STS + account alias).
+Validate local AWS SSO profiles can authenticate (STS + account alias),
+or inspect ~/.aws/config for SSO profiles without logging in.
 
 Options:
+  --check-config     Inspect ~/.aws/config for SSO profiles; no login required
   --help, -h         Show this help message
 
 EOF
@@ -95,86 +99,109 @@ check_sso_session() {
     log_ok "SSO session active: $identity"
 }
 
-get_profiles_from_config() {
+# Emit one line per SSO profile:
+#   name|method|sso_session|sso_account_id|sso_role_name
+# method is "session" (sso_session=) or "legacy" (inline sso_* keys).
+discover_sso_profiles() {
     local config_file="$1"
-    local profiles=()
 
     if [ ! -f "$config_file" ]; then
         return
     fi
 
-    while IFS= read -r line; do
-        line=$(echo "$line" | tr -d '\r')
-        local profile_name=""
-        if [[ "$line" =~ ^\[profile[[:space:]]+([^\]]+)\] ]]; then
-            profile_name="${BASH_REMATCH[1]}"
+    local profile_name=""
+    local sso_session=""
+    local sso_start_url=""
+    local sso_account_id=""
+    local sso_role_name=""
+
+    emit_if_sso() {
+        [ -z "$profile_name" ] && return 0
+        local method=""
+        if [ -n "$sso_session" ]; then
+            method="session"
+        elif [ -n "$sso_start_url" ] || { [ -n "$sso_account_id" ] && [ -n "$sso_role_name" ]; }; then
+            method="legacy"
+        else
+            return 0
         fi
-        if [ -n "$profile_name" ] && [ "$profile_name" != "default" ]; then
-            profiles+=("$profile_name")
+        printf '%s|%s|%s|%s|%s\n' \
+            "$profile_name" "$method" "$sso_session" "$sso_account_id" "$sso_role_name"
+    }
+
+    reset_section() {
+        profile_name=""
+        sso_session=""
+        sso_start_url=""
+        sso_account_id=""
+        sso_role_name=""
+    }
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line//$'\r'/}"
+        # skip comments / blank
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line//[[:space:]]/}" ]] && continue
+
+        if [[ "$line" =~ ^\[profile[[:space:]]+([^\]]+)\] ]]; then
+            emit_if_sso
+            reset_section
+            profile_name="${BASH_REMATCH[1]}"
+            # trim whitespace
+            profile_name="${profile_name#"${profile_name%%[![:space:]]*}"}"
+            profile_name="${profile_name%"${profile_name##*[![:space:]]}"}"
+            continue
+        fi
+
+        if [[ "$line" =~ ^\[default\] ]]; then
+            emit_if_sso
+            reset_section
+            profile_name="default"
+            continue
+        fi
+
+        # skip other sections (e.g. sso-session)
+        if [[ "$line" =~ ^\[ ]]; then
+            emit_if_sso
+            reset_section
+            continue
+        fi
+
+        [ -z "$profile_name" ] && continue
+
+        if [[ "$line" =~ ^[[:space:]]*sso_session[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+            sso_session="${BASH_REMATCH[1]}"
+            sso_session="${sso_session%"${sso_session##*[![:space:]]}"}"
+        elif [[ "$line" =~ ^[[:space:]]*sso_start_url[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+            sso_start_url="${BASH_REMATCH[1]}"
+            sso_start_url="${sso_start_url%"${sso_start_url##*[![:space:]]}"}"
+        elif [[ "$line" =~ ^[[:space:]]*sso_account_id[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+            sso_account_id="${BASH_REMATCH[1]}"
+            sso_account_id="${sso_account_id%"${sso_account_id##*[![:space:]]}"}"
+        elif [[ "$line" =~ ^[[:space:]]*sso_role_name[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+            sso_role_name="${BASH_REMATCH[1]}"
+            sso_role_name="${sso_role_name%"${sso_role_name##*[![:space:]]}"}"
         fi
     done < "$config_file"
 
-    printf '%s\n' "${profiles[@]}"
+    emit_if_sso
 }
 
-get_profiles_from_credentials() {
+warn_static_credentials() {
     local creds_file="$1"
-    local profiles=()
+    [ ! -f "$creds_file" ] && return 0
 
-    if [ ! -f "$creds_file" ]; then
-        return
-    fi
-
-    local current_profile=""
-    local has_sso_config=false
-    local has_static_creds=false
+    local current=""
 
     while IFS= read -r line || [ -n "$line" ]; do
-        line=$(echo "$line" | tr -d '\r')
+        line="${line//$'\r'/}"
         if [[ "$line" =~ ^\[([^\]]+)\] ]]; then
-            if [ -n "$current_profile" ]; then
-                if [ "$has_static_creds" = true ]; then
-                    log_error "Static credentials detected in profile [$current_profile]"
-                    log_error "This script only supports SSO-based profiles."
-                    log_error "Please remove static credential profiles from $creds_file"
-                    exit 1
-                fi
-                if [ "$has_sso_config" = true ] && [ "$current_profile" != "default" ]; then
-                    profiles+=("$current_profile")
-                fi
-            fi
-
-            current_profile="${BASH_REMATCH[1]}"
-            has_sso_config=false
-            has_static_creds=false
-        elif [ -n "$current_profile" ]; then
-            if [[ "$line" =~ ^sso_(start_url|region|account_id|role_name) ]]; then
-                has_sso_config=true
-            fi
-            if [[ "$line" =~ ^aws_(access_key_id|secret_access_key) ]]; then
-                has_static_creds=true
-            fi
+            current="${BASH_REMATCH[1]}"
+        elif [ -n "$current" ] && [[ "$line" =~ ^[[:space:]]*aws_access_key_id[[:space:]]*= ]]; then
+            log_warn "Static credentials in [$current] ($creds_file); SSO discovery uses $AWS_CONFIG_FILE only"
+            current=""
         fi
     done < "$creds_file"
-
-    if [ -n "$current_profile" ]; then
-        if [ "$has_static_creds" = true ]; then
-            log_error "Static credentials detected in profile [$current_profile]"
-            log_error "This script only supports SSO-based profiles."
-            log_error "Please remove static credential profiles from $creds_file"
-            exit 1
-        fi
-        if [ "$has_sso_config" = true ] && [ "$current_profile" != "default" ]; then
-            profiles+=("$current_profile")
-        fi
-    fi
-
-    printf '%s\n' "${profiles[@]}"
-}
-
-merge_profiles() {
-    local profiles="$1"
-    echo "$profiles" | sort -u | grep -v '^$'
 }
 
 validate_profile() {
@@ -189,15 +216,134 @@ validate_profile() {
 
     local alias
     alias=$(aws iam list-account-aliases --query 'AccountAliases[0]' --output text 2>/dev/null) || alias="<no-alias>"
-    [ -z "$alias" ] && alias="<no-alias>"
+    [ -z "$alias" ] || [ "$alias" = "None" ] && alias="<no-alias>"
 
     echo "$account_id|$alias|$profile"
     return 0
 }
 
+run_check_config() {
+    log_info "Inspecting SSO profiles in $AWS_CONFIG_FILE (no login)..."
+
+    if [ ! -f "$AWS_CONFIG_FILE" ]; then
+        log_error "Config file not found: $AWS_CONFIG_FILE"
+        exit 1
+    fi
+
+    local rows
+    rows=$(discover_sso_profiles "$AWS_CONFIG_FILE")
+
+    if [ -z "$rows" ]; then
+        log_error "No SSO profiles found in $AWS_CONFIG_FILE"
+        exit 1
+    fi
+
+    local profile_count
+    profile_count=$(printf '%s\n' "$rows" | grep -c . || true)
+
+    log_ok "Found $profile_count SSO profile(s)"
+    echo ""
+    printf "%-20s | %-8s | %-16s | %-14s | %s\n" "PROFILE" "METHOD" "ACCOUNT" "SESSION/ROLE" "DETAIL"
+    printf "%-20s-+-%-8s-+-%-16s-+-%-14s-+-%s\n" "--------------------" "--------" "----------------" "--------------" "------"
+
+    while IFS= read -r row || [ -n "$row" ]; do
+        [ -z "$row" ] && continue
+        local name method session account role detail
+        IFS='|' read -r name method session account role <<< "$row"
+        if [ "$method" = "session" ]; then
+            detail="sso_session=$session"
+            printf "%-20s | %-8s | %-16s | %-14s | %s\n" \
+                "$name" "$method" "${account:-<unset>}" "${session:-<unset>}" "$detail"
+        else
+            detail="sso_role_name=${role:-<unset>}"
+            printf "%-20s | %-8s | %-16s | %-14s | %s\n" \
+                "$name" "$method" "${account:-<unset>}" "${role:-<unset>}" "$detail"
+        fi
+    done <<< "$rows"
+
+    echo ""
+    echo "---"
+    echo "Config-only check: $profile_count SSO profile(s) in $AWS_CONFIG_FILE"
+}
+
+run_validate() {
+    check_aws_cli
+    check_aws_env_vars
+    check_sso_session
+
+    log_info "Discovering SSO profiles in $AWS_CONFIG_FILE..."
+
+    if [ ! -f "$AWS_CONFIG_FILE" ]; then
+        log_error "Config file not found: $AWS_CONFIG_FILE"
+        exit 1
+    fi
+
+    warn_static_credentials "$AWS_CREDENTIALS_FILE"
+
+    local rows
+    rows=$(discover_sso_profiles "$AWS_CONFIG_FILE")
+
+    if [ -z "$rows" ]; then
+        log_error "No SSO profiles found in $AWS_CONFIG_FILE"
+        exit 1
+    fi
+
+    local profile_count
+    profile_count=$(printf '%s\n' "$rows" | grep -c . || true)
+
+    log_ok "Found $profile_count SSO profile(s)"
+
+    echo ""
+    log_info "Validating profiles..."
+    echo ""
+
+    local success_count=0
+    local failure_count=0
+
+    TMPFILE=$(mktemp)
+    printf '%s\n' "$rows" > "$TMPFILE"
+
+    while IFS= read -r row || [ -n "$row" ]; do
+        [ -z "$row" ] && continue
+        local profile method session account_cfg role
+        IFS='|' read -r profile method session account_cfg role <<< "$row"
+
+        local result
+        if result=$(validate_profile "$profile"); then
+            success_count=$((success_count + 1))
+            local account_id alias
+            account_id=$(echo "$result" | cut -d'|' -f1)
+            alias=$(echo "$result" | cut -d'|' -f2)
+            printf "${GREEN}[OK]${RESET} %-12s | %-20s | %s - authenticated successfully\n" "$account_id" "$alias" "$profile"
+        else
+            failure_count=$((failure_count + 1))
+            local account_id="${account_cfg:-<unknown>}"
+            [ -z "$account_id" ] && account_id="<unknown>"
+            printf "${RED}[FAIL]${RESET} %-12s | %-20s | %s - failed to authenticate\n" "$account_id" "<no-alias>" "$profile"
+        fi
+    done < "$TMPFILE"
+
+    rm -f "$TMPFILE"
+    TMPFILE=""
+
+    echo ""
+    echo "---"
+    echo "Validated: $profile_count profile(s)"
+    echo -e "Succeeded: ${GREEN}$success_count${RESET}"
+    echo -e "Failed:    ${RED}$failure_count${RESET}"
+
+    if [ "$failure_count" -gt 0 ]; then
+        exit 1
+    fi
+}
+
 main() {
     while [[ $# -gt 0 ]]; do
         case $1 in
+            --check-config)
+                CHECK_CONFIG=true
+                shift
+                ;;
             --help|-h)
                 usage
                 exit 0
@@ -215,80 +361,10 @@ main() {
     echo "#========================================#"
     echo ""
 
-    check_aws_cli
-    check_aws_env_vars
-    check_sso_session
-
-    log_info "Discovering AWS profiles..."
-
-    local config_profiles=""
-    local creds_profiles=""
-
-    if [ -f "$AWS_CONFIG_FILE" ]; then
-        config_profiles=$(get_profiles_from_config "$AWS_CONFIG_FILE")
+    if [ "$CHECK_CONFIG" = true ]; then
+        run_check_config
     else
-        log_warn "Config file not found: $AWS_CONFIG_FILE"
-    fi
-
-    if [ -f "$AWS_CREDENTIALS_FILE" ]; then
-        creds_profiles=$(get_profiles_from_credentials "$AWS_CREDENTIALS_FILE")
-    else
-        log_warn "Credentials file not found: $AWS_CREDENTIALS_FILE"
-    fi
-
-    local all_profiles
-    all_profiles=$(merge_profiles "${config_profiles}${creds_profiles:+$'\n'}$creds_profiles" | tr -d '\r')
-
-    if [ -z "$all_profiles" ]; then
-        log_error "No SSO profiles found in $AWS_CONFIG_FILE or $AWS_CREDENTIALS_FILE"
-        exit 1
-    fi
-
-    local profile_count
-    profile_count=$(echo "$all_profiles" | wc -l)
-
-    log_ok "Found $profile_count SSO profile(s)"
-
-    echo ""
-    log_info "Validating profiles..."
-    echo ""
-
-    local success_count=0
-    local failure_count=0
-
-    TMPFILE=$(mktemp)
-    echo "$all_profiles" > "$TMPFILE"
-
-    while IFS= read -r profile || [ -n "$profile" ]; do
-        [ -z "$profile" ] && continue
-
-        local result
-        if result=$(validate_profile "$profile"); then
-            success_count=$((success_count + 1))
-            local account_id alias
-            account_id=$(echo "$result" | cut -d'|' -f1)
-            alias=$(echo "$result" | cut -d'|' -f2)
-            printf "${GREEN}[OK]${RESET} %-12s | %-20s | %s - authenticated successfully\n" "$account_id" "$alias" "$profile"
-        else
-            failure_count=$((failure_count + 1))
-            export AWS_PROFILE="$profile"
-            local account_id
-            account_id=$(aws configure get sso_account_id 2>/dev/null) || account_id="<unknown>"
-            printf "${RED}[FAIL]${RESET} %-12s | %-20s | %s - failed to authenticate\n" "$account_id" "<no-alias>" "$profile"
-        fi
-    done < "$TMPFILE"
-
-    rm -f "$TMPFILE"
-    TMPFILE=""
-
-    echo ""
-    echo "---"
-    echo "Validated: $profile_count profile(s)"
-    echo -e "Succeeded: ${GREEN}$success_count${RESET}"
-    echo -e "Failed:    ${RED}$failure_count${RESET}"
-
-    if [ "$failure_count" -gt 0 ]; then
-        exit 1
+        run_validate
     fi
 }
 

@@ -8,8 +8,6 @@ Usage: $0 [OPTIONS]
 
 List S3 buckets and object counts in the current AWS account (read-only).
 
-Requires: aws CLI, jq
-
 Options:
   --help, -h         Show this help message
 
