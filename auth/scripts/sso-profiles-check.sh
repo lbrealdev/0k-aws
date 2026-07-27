@@ -259,34 +259,33 @@ run_check_config() {
     local h_profile="PROFILE"
     local h_method="METHOD"
     local h_account="ACCOUNT"
-    local h_session="SESSION/ROLE"
-    local h_detail="DETAIL"
+    local h_session="SESSION"
+    local h_role="ROLE"
 
     local w_profile=${#h_profile}
     local w_method=${#h_method}
     local w_account=${#h_account}
     local w_session=${#h_session}
-    local w_detail=${#h_detail}
+    local w_role=${#h_role}
 
     local display_rows=""
     while IFS= read -r row || [ -n "$row" ]; do
         [ -z "$row" ] && continue
-        local name method session account role detail col4
+        local name method session account role session_col role_col
         IFS='|' read -r name method session account role <<< "$row"
         account="${account:-<unset>}"
         if [ "$method" = "session" ]; then
-            col4="${session:-<unset>}"
-            detail="sso_session=$session"
+            session_col="${session:-<unset>}"
         else
-            col4="${role:-<unset>}"
-            detail="sso_role_name=${role:-<unset>}"
+            session_col="<n/a>"
         fi
+        role_col="${role:-<unset>}"
         w_profile=$(_col_width "$w_profile" "$name")
         w_method=$(_col_width "$w_method" "$method")
         w_account=$(_col_width "$w_account" "$account")
-        w_session=$(_col_width "$w_session" "$col4")
-        w_detail=$(_col_width "$w_detail" "$detail")
-        display_rows+="${name}|${method}|${account}|${col4}|${detail}"$'\n'
+        w_session=$(_col_width "$w_session" "$session_col")
+        w_role=$(_col_width "$w_role" "$role_col")
+        display_rows+="${name}|${method}|${account}|${session_col}|${role_col}"$'\n'
     done <<< "$rows"
 
     log_ok "Found $profile_count SSO profile(s)"
@@ -296,24 +295,24 @@ run_check_config() {
         "$w_method" "$h_method" \
         "$w_account" "$h_account" \
         "$w_session" "$h_session" \
-        "$w_detail" "$h_detail"
+        "$w_role" "$h_role"
     printf "%s-+-%s-+-%s-+-%s-+-%s\n" \
         "$(_dashes "$w_profile")" \
         "$(_dashes "$w_method")" \
         "$(_dashes "$w_account")" \
         "$(_dashes "$w_session")" \
-        "$(_dashes "$w_detail")"
+        "$(_dashes "$w_role")"
 
     while IFS= read -r row || [ -n "$row" ]; do
         [ -z "$row" ] && continue
-        local name method account col4 detail
-        IFS='|' read -r name method account col4 detail <<< "$row"
+        local name method account session_col role_col
+        IFS='|' read -r name method account session_col role_col <<< "$row"
         printf "%-*s | %-*s | %-*s | %-*s | %-*s\n" \
             "$w_profile" "$name" \
             "$w_method" "$method" \
             "$w_account" "$account" \
-            "$w_session" "$col4" \
-            "$w_detail" "$detail"
+            "$w_session" "$session_col" \
+            "$w_role" "$role_col"
     done <<< "$display_rows"
 
     echo ""
