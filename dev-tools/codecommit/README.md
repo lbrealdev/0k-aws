@@ -11,3 +11,5 @@ AWS CodeCommit is a fully-managed source control service that hosts Git reposito
 ## Related
 
 - [CLI Commands - CodeCommit](../../cli/codecommit.md)
+- [Git setup](./git-setup.md) — credentials, gitconfig helper script
+
