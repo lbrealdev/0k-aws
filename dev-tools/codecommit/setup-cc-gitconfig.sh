@@ -3,7 +3,7 @@
 # Clears system credential.helper=manager so AWS CLI credential-helper can auth
 # without a username/password dialog. Prefer --fix-system or --migrate + bashrc NOSYSTEM.
 
-set -euo pipefail
+set -eEuo pipefail
 
 BACKUP_DIR="${HOME}/gitconfig-backups"
 DO_FIX_SYSTEM=0
@@ -130,11 +130,14 @@ can_write_system() {
 backup_file() {
   local src="$1"
   local label="$2"
-  local stamp dest
+  local stamp dest base
   [[ -f "$src" ]] || return 0
   mkdir -p "$BACKUP_DIR"
   stamp="$(date +%Y%m%d-%H%M%S)"
-  dest="${BACKUP_DIR}/gitconfig.${label}.${stamp}.bak"
+  base="$(basename -- "$src")"
+  base="${base#.}" # e.g. .gitconfig -> gitconfig (avoid "..")
+  # Basename disambiguates multiple origins under the same scope (e.g. [include] targets).
+  dest="${BACKUP_DIR}/gitconfig.${label}.${base}.${stamp}.bak"
   cp -v "$src" "$dest"
 }
 
@@ -153,23 +156,54 @@ collect_origin_paths() {
   done
 }
 
+# Warn when a GCM helper value lives in an [include] target (not the primary file).
+warn_gcm_in_included() {
+  local scope="$1"
+  local primary="$2"
+  local line path rest key val
+
+  [[ -n "$primary" ]] || return 0
+
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" != file:* ]] && continue
+    path="${line#file:}"
+    path="${path%%$'\t'*}"
+    rest="${line#*$'\t'}"
+    [[ "$rest" == *=* ]] || continue
+    key="${rest%%=*}"
+    val="${rest#*=}"
+    [[ "$key" == "credential.helper" ]] || continue
+    is_gcm_helper "$val" || continue
+    if [[ "$path" != "$primary" ]]; then
+      warn "GCM credential.helper (${val}) lives in included ${scope} file: ${path}"
+    fi
+  done < <(git config --"${scope}" --list --show-origin --includes 2>/dev/null || true)
+}
+
 backup_configs() {
-  local path
+  local path primary
   local -A seen=()
 
+  primary="$(system_config_path 2>/dev/null || true)"
   while IFS= read -r path; do
     [[ -z "$path" ]] && continue
     [[ -n "${seen[$path]+x}" ]] && continue
     seen[$path]=1
     backup_file "$path" "system"
-  done < <(git config --system --list --show-origin 2>/dev/null | collect_origin_paths || true)
+  done < <(git config --system --list --show-origin --includes 2>/dev/null | collect_origin_paths || true)
+  warn_gcm_in_included system "$primary"
 
+  primary=""
+  if [[ -f "$GLOBAL_GITCONFIG" ]]; then
+    primary="$GLOBAL_GITCONFIG"
+  fi
   while IFS= read -r path; do
     [[ -z "$path" ]] && continue
     [[ -n "${seen[$path]+x}" ]] && continue
     seen[$path]=1
     backup_file "$path" "global"
-  done < <(git config --global --list --show-origin 2>/dev/null | collect_origin_paths || true)
+  done < <(git config --global --list --show-origin --includes 2>/dev/null | collect_origin_paths || true)
+  warn_gcm_in_included global "$primary"
 }
 
 print_section() {
@@ -438,11 +472,11 @@ main() {
   fi
 
   if [[ "$DO_FIX_SYSTEM" -eq 1 ]]; then
-    fix_system_helpers || exit 2
+    fix_system_helpers
   fi
 
   if [[ "$DO_MIGRATE" -eq 1 ]]; then
-    migrate_system_to_global || exit 2
+    migrate_system_to_global
   fi
 
   print_credential_section system
