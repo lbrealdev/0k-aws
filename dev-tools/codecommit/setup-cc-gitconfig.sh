@@ -8,7 +8,6 @@ set -euo pipefail
 BACKUP_DIR="${HOME}/gitconfig-backups"
 DO_FIX_SYSTEM=0
 DO_MIGRATE=0
-PROBE_KEY="setup.cc.gitconfig.probe"
 BASHRC_MARKER="# managed-by: setup-cc-gitconfig.sh"
 GLOBAL_GITCONFIG="${HOME}/.gitconfig"
 USER_BASHRC="${HOME}/.bashrc"
@@ -22,7 +21,8 @@ Prepare Git for CodeCommit HTTPS with AWS CLI credential-helper
 Mutating flags back up configs first.
 
 Options:
-  --fix-system       Unset credential.helper in system gitconfig (if writable)
+  --fix-system       Remove GCM (manager) helper values from the system
+                     credential.helper, preserving other helpers (if writable)
   --migrate          Merge system settings into existing global (skip GCM),
                      append GIT_CONFIG_NOSYSTEM=1 to existing ~/.bashrc
                      Requires ~/.gitconfig and ~/.bashrc (does not create them)
@@ -35,7 +35,7 @@ Exit codes:
   2  Usage error, missing prereqs, git missing, or unexpected failure
 
 Policy:
-  1) Writable system  -> unset system credential.helper (--fix-system)
+  1) Writable system  -> remove GCM helpers from system credential.helper (--fix-system)
   2) Read-only system -> --migrate (merge system->global, enable NOSYSTEM in ~/.bashrc)
 EOF
 }
@@ -43,6 +43,8 @@ EOF
 log() { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 err() { printf 'ERROR: %s\n' "$*" >&2; }
+
+trap 'err "Unexpected failure on line $LINENO"; exit 2' ERR
 
 is_gcm_helper() {
   local val="$1"
@@ -86,25 +88,42 @@ effective_has_manager() {
 }
 
 system_config_path() {
-  local origin path
-  # Prefer an explicit list entry: file:<path><tab>key=value
-  origin="$(git config --system --list --show-origin 2>/dev/null | head -n1 || true)"
-  if [[ -n "$origin" ]]; then
-    path="$(printf '%s\n' "$origin" | sed -E 's/^file:([^[:space:]]+).*/\1/')"
-    if [[ -n "$path" ]]; then
-      printf '%s\n' "$path"
-      return 0
-    fi
-  fi
-  return 1
+  # Prefer an explicit list entry: file:<path><TAB>key=value (paths may contain spaces)
+  local line path
+  line="$(git config --system --list --show-origin 2>/dev/null | head -n1 || true)"
+  [[ -n "$line" ]] || return 1
+  path="${line#file:}"
+  path="${path%%$'\t'*}"
+  [[ -n "$path" ]] || return 1
+  printf '%s\n' "$path"
+  return 0
 }
 
+# Read-only writability check (no probe writes to system gitconfig).
 can_write_system() {
-  if git config --system --add "$PROBE_KEY" 1 2>/dev/null; then
-    git config --system --unset-all "$PROBE_KEY" 2>/dev/null || true
+  local path dir parent
+  path="$(system_config_path 2>/dev/null || true)"
+  if [[ -z "$path" ]]; then
+    return 1
+  fi
+  if [[ -f "$path" ]]; then
+    if [[ -w "$path" ]]; then
+      return 0
+    fi
+    return 1
+  fi
+  # File does not exist: git would create it; check nearest existing ancestor dir.
+  dir="$(dirname -- "$path")"
+  while [[ ! -d "$dir" ]]; do
+    parent="$(dirname -- "$dir")"
+    if [[ "$parent" == "$dir" ]]; then
+      return 1
+    fi
+    dir="$parent"
+  done
+  if [[ -w "$dir" ]]; then
     return 0
   fi
-  git config --system --unset-all "$PROBE_KEY" 2>/dev/null || true
   return 1
 }
 
@@ -119,19 +138,38 @@ backup_file() {
   cp -v "$src" "$dest"
 }
 
+# Parse file:<path><TAB>... origin lines; print distinct existing paths (tab-safe for spaces).
+collect_origin_paths() {
+  local line path
+  local -A seen=()
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" != file:* ]] && continue
+    path="${line#file:}"
+    path="${path%%$'\t'*}"
+    [[ -n "$path" ]] || continue
+    [[ -n "${seen[$path]+x}" ]] && continue
+    seen[$path]=1
+    printf '%s\n' "$path"
+  done
+}
+
 backup_configs() {
-  local sys_path global_path
-  sys_path="$(system_config_path 2>/dev/null || true)"
-  global_path="$(git config --global --list --show-origin 2>/dev/null | head -n1 | sed -E 's/^file:([^[:space:]]+).*/\1/' || true)"
-  if [[ -z "$global_path" && -f "${HOME}/.gitconfig" ]]; then
-    global_path="${HOME}/.gitconfig"
-  fi
-  if [[ -n "$sys_path" ]]; then
-    backup_file "$sys_path" "system"
-  fi
-  if [[ -n "$global_path" ]]; then
-    backup_file "$global_path" "global"
-  fi
+  local path
+  local -A seen=()
+
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    [[ -n "${seen[$path]+x}" ]] && continue
+    seen[$path]=1
+    backup_file "$path" "system"
+  done < <(git config --system --list --show-origin 2>/dev/null | collect_origin_paths || true)
+
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    [[ -n "${seen[$path]+x}" ]] && continue
+    seen[$path]=1
+    backup_file "$path" "global"
+  done < <(git config --global --list --show-origin 2>/dev/null | collect_origin_paths || true)
 }
 
 print_section() {
@@ -184,26 +222,44 @@ print_nosystem_status() {
   fi
 }
 
+# Escape a string for use as an anchored ERE value-regex with git config --unset-all.
+escape_config_regex() {
+  printf '%s' "$1" | sed -E 's/[][\\.*^$+?{}|()]/\\&/g'
+}
+
+# Remove GCM (manager) helper values from the system credential.helper, preserving other helpers.
 fix_system_helpers() {
   print_section "Fixing system credential.helper"
   if ! can_write_system; then
     err "No write permission on system gitconfig; use --migrate instead"
     return 1
   fi
-  if git config --system --get-all credential.helper >/dev/null 2>&1; then
-    git config --system --unset-all credential.helper
-    log "Unset system credential.helper"
+
+  local helper escaped
+  local removed=0
+  local -A seen=()
+
+  while IFS= read -r helper; do
+    [[ -z "$helper" ]] && continue
+    [[ -n "${seen[$helper]+x}" ]] && continue
+    seen[$helper]=1
+    if is_gcm_helper "$helper"; then
+      escaped="$(escape_config_regex "$helper")"
+      git config --system --unset-all credential.helper "^${escaped}$"
+      removed=$((removed + 1))
+    fi
+  done < <(git config --system --get-all credential.helper 2>/dev/null || true)
+
+  if [[ "$removed" -gt 0 ]]; then
+    log "GCM helper(s) removed from system credential.helper"
   else
-    log "System credential.helper already absent"
+    log "no GCM helper present"
   fi
 }
 
 is_skipped_migrate_key() {
   local key="$1"
   local val="$2"
-  if [[ "$key" == "$PROBE_KEY" ]]; then
-    return 0
-  fi
   if [[ "$key" == "credential.helper" ]] && is_gcm_helper "$val"; then
     return 0
   fi
@@ -282,7 +338,7 @@ migrate_system_to_global() {
     count=$((count + 1))
   done < <(git config --system --list)
 
-  log "Migrated ${count} value(s); skipped ${skipped} GCM/probe value(s)"
+  log "Migrated ${count} value(s); skipped ${skipped} GCM value(s)"
   log "Global settings preserved (merge-only; nothing deleted)"
 
   append_nosystem_to_bashrc

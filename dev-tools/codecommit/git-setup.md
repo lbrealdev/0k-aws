@@ -19,8 +19,8 @@ Corporate Git for Windows often sets system `credential.helper = manager` (Git C
 | Mode | Behavior |
 | --- | --- |
 | Default (check-only) | Reports system/global/effective `credential.helper`, whether the system gitconfig is writable, and whether `GIT_CONFIG_NOSYSTEM` is set. |
-| `--fix-system` | If the system gitconfig is writable, unsets the system `credential.helper`. |
-| `--migrate` | If the system gitconfig is read-only: merges system settings into the existing global config (skips GCM helpers), appends `export GIT_CONFIG_NOSYSTEM=1` to an existing `~/.bashrc`, then reload the shell. Requires `~/.gitconfig` and `~/.bashrc` (does not create them). |
+| `--fix-system` | If the system gitconfig is writable, removes GCM (manager) helper values from the system `credential.helper`, preserving other helpers. |
+| `--migrate` | If the system gitconfig is read-only: merges system settings into the existing global config (skips GCM helpers), appends `export GIT_CONFIG_NOSYSTEM=1` to an existing `~/.bashrc`; reload the shell afterwards to apply it. Requires `~/.gitconfig` and `~/.bashrc` (does not create them). |
 
 Mutating modes back up to `~/gitconfig-backups/` (override with `--backup-dir`) before writing.
 
@@ -30,7 +30,7 @@ Exit codes: `0` success (no effective manager helper, or `--migrate` succeeded);
 # check only (default)
 ./setup-cc-gitconfig.sh
 
-# writable system gitconfig: remove system credential.helper (GCM)
+# writable system gitconfig: remove GCM helpers only (preserve others)
 ./setup-cc-gitconfig.sh --fix-system
 
 # read-only system gitconfig: merge into global + GIT_CONFIG_NOSYSTEM
