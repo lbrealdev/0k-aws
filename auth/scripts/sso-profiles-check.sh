@@ -10,6 +10,10 @@ TMPFILE=""
 trap 'rm -f "$TMPFILE"' EXIT
 
 CHECK_CONFIG=false
+CHECK_ENV=false
+
+BASHRC_FILE="${HOME}/.bashrc"
+BASH_PROFILE_FILE="${HOME}/.bash_profile"
 
 if [ -t 1 ]; then
   GREEN="\e[32m"; YELLOW="\e[33m"; BLUE="\e[34m"; RED="\e[31m"; GRAY="\e[90m"; RESET="\e[0m"
@@ -22,10 +26,11 @@ usage() {
 Usage: $0 [OPTIONS]
 
 Validate local AWS SSO profiles can authenticate (STS + account alias),
-or inspect ~/.aws/config for SSO profiles without logging in.
+or inspect local config / shell defaults without logging in.
 
 Options:
   --check-config     Inspect ~/.aws/config for SSO profiles; no login required
+  --check-env        Inspect shell defaults for AWS_PROFILE (~/.bashrc, ~/.bash_profile)
   --help, -h         Show this help message
 
 EOF
@@ -237,6 +242,113 @@ _dashes() {
     printf '%*s' "$1" '' | tr ' ' '-'
 }
 
+# Print first AWS_PROFILE value found in a file (stdout); return 0 if found.
+_find_aws_profile_in_file() {
+    local file="$1"
+    [ ! -f "$file" ] && return 1
+
+    local line value
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line//$'\r'/}"
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?AWS_PROFILE[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+            value="${BASH_REMATCH[2]}"
+            # strip inline comments and surrounding quotes/whitespace
+            value="${value%%#*}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            value="${value#\"}"
+            value="${value%\"}"
+            value="${value#\'}"
+            value="${value%\'}"
+            if [ -n "$value" ]; then
+                printf '%s\n' "$value"
+                return 0
+            fi
+        fi
+    done < "$file"
+    return 1
+}
+
+# Return 0 if file appears to source ~/.bashrc (Git Bash login-shell pattern).
+_file_sources_bashrc() {
+    local file="$1"
+    [ ! -f "$file" ] && return 1
+
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line//$'\r'/}"
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        if [[ "$line" =~ (source|\.)[[:space:]]+.*(\.bashrc|BASHRC) ]]; then
+            return 0
+        fi
+    done < "$file"
+    return 1
+}
+
+run_check_env() {
+    log_info "Inspecting shell default profile (AWS_PROFILE)..."
+    echo ""
+
+    if [ -n "${AWS_PROFILE:-}" ]; then
+        log_ok "Current shell: AWS_PROFILE=${AWS_PROFILE}"
+    else
+        log_info "Current shell: AWS_PROFILE is unset"
+    fi
+
+    local bashrc_profile=""
+    local bash_profile_profile=""
+    local found_in=""
+
+    if [ ! -f "$BASHRC_FILE" ]; then
+        log_warn "Missing $BASHRC_FILE (usual place for export AWS_PROFILE=... on Git Bash)"
+    elif bashrc_profile=$(_find_aws_profile_in_file "$BASHRC_FILE"); then
+        log_ok "$BASHRC_FILE: AWS_PROFILE=${bashrc_profile}"
+        found_in="bashrc"
+    else
+        log_info "$BASHRC_FILE: no AWS_PROFILE assignment found"
+    fi
+
+    if [ ! -f "$BASH_PROFILE_FILE" ]; then
+        log_info "$BASH_PROFILE_FILE: not present"
+    elif bash_profile_profile=$(_find_aws_profile_in_file "$BASH_PROFILE_FILE"); then
+        log_ok "$BASH_PROFILE_FILE: AWS_PROFILE=${bash_profile_profile}"
+        if [ -z "$found_in" ]; then
+            found_in="bash_profile"
+        else
+            found_in="both"
+        fi
+    else
+        log_info "$BASH_PROFILE_FILE: no AWS_PROFILE assignment found"
+    fi
+
+    # Login shells (common in Git Bash) read .bash_profile, not .bashrc, unless sourced.
+    if [ -n "$bashrc_profile" ] && [ -f "$BASH_PROFILE_FILE" ] && ! _file_sources_bashrc "$BASH_PROFILE_FILE"; then
+        log_warn "$BASH_PROFILE_FILE does not source $BASHRC_FILE (login shells may not load AWS_PROFILE)"
+    elif [ -n "$bashrc_profile" ] && [ ! -f "$BASH_PROFILE_FILE" ]; then
+        log_warn "No $BASH_PROFILE_FILE; Git Bash login shells may not load $BASHRC_FILE"
+    elif [ -n "$bashrc_profile" ] && [ -f "$BASH_PROFILE_FILE" ] && _file_sources_bashrc "$BASH_PROFILE_FILE"; then
+        log_ok "$BASH_PROFILE_FILE sources .bashrc"
+    fi
+
+    echo ""
+    echo "---"
+    case "$found_in" in
+        bashrc)
+            echo "Shell default: AWS_PROFILE=${bashrc_profile} (from $BASHRC_FILE)"
+            ;;
+        bash_profile)
+            echo "Shell default: AWS_PROFILE=${bash_profile_profile} (from $BASH_PROFILE_FILE)"
+            ;;
+        both)
+            echo "Shell default: AWS_PROFILE set in both rc files (bashrc=${bashrc_profile}, bash_profile=${bash_profile_profile})"
+            ;;
+        *)
+            echo "Shell default: no AWS_PROFILE configured in $BASHRC_FILE or $BASH_PROFILE_FILE"
+            ;;
+    esac
+}
+
 run_check_config() {
     log_info "Inspecting SSO profiles in $AWS_CONFIG_FILE (no login)..."
 
@@ -421,6 +533,10 @@ main() {
                 CHECK_CONFIG=true
                 shift
                 ;;
+            --check-env)
+                CHECK_ENV=true
+                shift
+                ;;
             --help|-h)
                 usage
                 exit 0
@@ -433,6 +549,12 @@ main() {
         esac
     done
 
+    if [ "$CHECK_CONFIG" = true ] && [ "$CHECK_ENV" = true ]; then
+        echo "Error: --check-config and --check-env are mutually exclusive" >&2
+        usage >&2
+        exit 1
+    fi
+
     echo "#========================================#"
     echo "#     AWS SSO PROFILES CHECK SCRIPT      #"
     echo "#========================================#"
@@ -440,6 +562,8 @@ main() {
 
     if [ "$CHECK_CONFIG" = true ]; then
         run_check_config
+    elif [ "$CHECK_ENV" = true ]; then
+        run_check_env
     else
         run_validate
     fi
