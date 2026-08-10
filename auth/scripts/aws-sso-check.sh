@@ -28,9 +28,25 @@ Usage: $0 [OPTIONS]
 Validate local AWS SSO profiles can authenticate (STS + account alias),
 or inspect local config / shell defaults without logging in.
 
+  Flow:
+
+   +-------------------------------------+
+   |          aws-sso-check.sh           |
+   +-------------------------------------+
+                     |
+        +------------+------------+
+        |            |            |
+        v            v            v
+    (default)   --check-config   --check-env
+    validate    list SSO         show AWS_PROFILE
+    profiles    profiles in      shell defaults
+    (STS login) ~/.aws/config    (no login)
+                (no login)
+
 Options:
   --check-config     Inspect ~/.aws/config for SSO profiles; no login required
-  --check-env        Inspect shell defaults for AWS_PROFILE (~/.bashrc, ~/.bash_profile)
+  --check-env        Inspect shell defaults for AWS_PROFILE
+                     (~/.bashrc, ~/.bash_profile)
   --help, -h         Show this help message
 
 EOF
@@ -38,10 +54,10 @@ EOF
 
 now() { date +"%Y-%m-%d %H:%M:%S"; }
 
-log_info()  { echo -e "[$(now)] ${BLUE}[INFO]${RESET}  $*"; }
-log_ok()    { echo -e "[$(now)] ${GREEN}[OK]${RESET}    $*"; }
-log_warn()  { echo -e "[$(now)] ${YELLOW}[WARN]${RESET}  $*"; }
-log_error() { echo -e "[$(now)] ${RED}[ERROR]${RESET} $*"; }
+log_info()  { local msg="${*//\\/\\\\}"; echo -e "[$(now)] ${BLUE}[INFO]${RESET}  $msg"; }
+log_ok()    { local msg="${*//\\/\\\\}"; echo -e "[$(now)] ${GREEN}[OK]${RESET}    $msg"; }
+log_warn()  { local msg="${*//\\/\\\\}"; echo -e "[$(now)] ${YELLOW}[WARN]${RESET}  $msg"; }
+log_error() { local msg="${*//\\/\\\\}"; echo -e "[$(now)] ${RED}[ERROR]${RESET} $msg"; }
 
 check_aws_cli() {
     log_info "Checking prerequisites..."
@@ -83,7 +99,7 @@ check_aws_env_vars() {
     if [ ${#found[@]} -gt 0 ]; then
         log_error "AWS environment variables are set. These may interfere with SSO authentication."
         for line in "${found[@]}"; do
-            echo -e "   - $line"
+            echo -e "   - ${line//\\/\\\\}"
         done
         log_info "Unset them with: unset ${AWS_ENV_VARS[*]}"
         exit 1
@@ -242,6 +258,82 @@ _dashes() {
     printf '%*s' "$1" '' | tr ' ' '-'
 }
 
+# Strip the script's color variables from $1 (stdout). Used for width math;
+# colors are literal "\e[..m" strings here, expanded only at print time.
+# Use case/"$tok" matching (literal) - not ${s//tok/} - because bash treats
+# the latter as a glob where "\e[31m" also matches data "e[31m".
+_strip_colors() {
+    local s="$1" tok out rest
+    for tok in "$GREEN" "$YELLOW" "$BLUE" "$RED" "$GRAY" "$RESET"; do
+        [ -z "$tok" ] && continue
+        out=""
+        rest="$s"
+        while [ -n "$rest" ]; do
+            case "$rest" in
+                *"$tok"*)
+                    out+="${rest%%"$tok"*}"
+                    rest="${rest#*"$tok"}"
+                    ;;
+                *)
+                    out+="$rest"
+                    rest=""
+                    ;;
+            esac
+        done
+        s="$out"
+    done
+    printf '%s' "$s"
+}
+
+# Escape backslashes in DATA (config-derived values) so they can never be
+# misinterpreted as the script's color tokens. Uses a same-length stand-in
+# (ASCII SUB) so width math on the escaped row matches visible output after
+# restore. Doubling alone is insufficient: "\e[31m" still matches inside "\\e".
+_esc_data() {
+    printf '%s' "${1//\\/$'\x1a'}"
+}
+
+# Render a panel row: data backslashes were already escaped by _esc_data at
+# build time, so the ONLY remaining escape-looking sequences are the script's
+# own color tokens - translated to ANSI only when the terminal supports
+# colors (GREEN non-empty). Emits literally via printf '%s'.
+_render() {
+    local s="$1"
+    if [ -n "$GREEN" ]; then
+        s="${s//\\e[32m/$'\e[32m'}"
+        s="${s//\\e[33m/$'\e[33m'}"
+        s="${s//\\e[34m/$'\e[34m'}"
+        s="${s//\\e[31m/$'\e[31m'}"
+        s="${s//\\e[90m/$'\e[90m'}"
+        s="${s//\\e[0m/$'\e[0m'}"
+    fi
+    s="${s//$'\x1a'/\\}"
+    printf '%s' "$s"
+}
+
+# Print a pure-ASCII panel around one or more rows. Frame width fits the
+# longest visible row; rows may embed color vars (colors wrap values only).
+print_panel() {
+    local rows=("$@")
+    local row plain max=0
+
+    for row in "${rows[@]}"; do
+        plain=$(_strip_colors "$row")
+        if [ "${#plain}" -gt "$max" ]; then
+            max=${#plain}
+        fi
+    done
+
+    printf '+%s+\n' "$(_dashes $((max + 2)))"
+    for row in "${rows[@]}"; do
+        plain=$(_strip_colors "$row")
+        printf '| '
+        _render "$row"
+        printf '%*s |\n' "$((max - ${#plain}))" ''
+    done
+    printf '+%s+\n' "$(_dashes $((max + 2)))"
+}
+
 # Print first AWS_PROFILE value found in a file (stdout); return 0 if found.
 _find_aws_profile_in_file() {
     local file="$1"
@@ -331,22 +423,24 @@ run_check_env() {
         log_ok "$BASH_PROFILE_FILE sources .bashrc"
     fi
 
-    echo ""
-    echo "---"
+    local summary
     case "$found_in" in
         bashrc)
-            echo "Shell default: AWS_PROFILE=${bashrc_profile} (from $BASHRC_FILE)"
+            summary="Shell default: AWS_PROFILE=$(_esc_data "$bashrc_profile") (from $(_esc_data "$BASHRC_FILE"))"
             ;;
         bash_profile)
-            echo "Shell default: AWS_PROFILE=${bash_profile_profile} (from $BASH_PROFILE_FILE)"
+            summary="Shell default: AWS_PROFILE=$(_esc_data "$bash_profile_profile") (from $(_esc_data "$BASH_PROFILE_FILE"))"
             ;;
         both)
-            echo "Shell default: AWS_PROFILE set in both rc files (bashrc=${bashrc_profile}, bash_profile=${bash_profile_profile})"
+            summary="Shell default: AWS_PROFILE set in both rc files (bashrc=$(_esc_data "$bashrc_profile"), bash_profile=$(_esc_data "$bash_profile_profile"))"
             ;;
         *)
-            echo "Shell default: no AWS_PROFILE configured in $BASHRC_FILE or $BASH_PROFILE_FILE"
+            summary="Shell default: no AWS_PROFILE configured in $(_esc_data "$BASHRC_FILE") or $(_esc_data "$BASH_PROFILE_FILE")"
             ;;
     esac
+
+    echo ""
+    print_panel "$summary"
 }
 
 run_check_config() {
@@ -428,8 +522,7 @@ run_check_config() {
     done <<< "$display_rows"
 
     echo ""
-    echo "---"
-    echo "Config-only check: $profile_count SSO profile(s) in $AWS_CONFIG_FILE"
+    print_panel "Config-only check: $profile_count SSO profile(s) in $(_esc_data "$AWS_CONFIG_FILE")"
 }
 
 run_validate() {
@@ -516,14 +609,31 @@ run_validate() {
     done <<< "$display_rows"
 
     echo ""
-    echo "---"
-    echo "Validated: $profile_count profile(s)"
-    echo -e "Succeeded: ${GREEN}$success_count${RESET}"
-    echo -e "Failed:    ${RED}$failure_count${RESET}"
+    print_panel \
+        "Validated: $profile_count profile(s)" \
+        "Succeeded: ${GREEN}$success_count${RESET}" \
+        "Failed:    ${RED}$failure_count${RESET}"
 
     if [ "$failure_count" -gt 0 ]; then
         exit 1
     fi
+}
+
+# ============================================================================
+# GENERATED ASCII ART - DO NOT EDIT BY HAND
+# Text: "SSO CHECK" / Font: Slant (FIGlet), 52 cols, pure ASCII
+# Source: https://asciified.thelicato.io/api/v2/ascii?text=SSO+CHECK&font=Slant
+# Regenerate: curl -s "<url>" | sed 's/[[:space:]]*$//'  ->  paste below
+# ============================================================================
+print_banner() {
+    cat <<'EOF'
+   __________ ____     ________  ________________ __
+  / ___/ ___// __ \   / ____/ / / / ____/ ____/ //_/
+  \__ \\__ \/ / / /  / /   / /_/ / __/ / /   / ,<
+ ___/ /__/ / /_/ /  / /___/ __  / /___/ /___/ /| |
+/____/____/\____/   \____/_/ /_/_____/\____/_/ |_|
+
+EOF
 }
 
 main() {
@@ -555,10 +665,7 @@ main() {
         exit 1
     fi
 
-    echo "#========================================#"
-    echo "#     AWS SSO PROFILES CHECK SCRIPT      #"
-    echo "#========================================#"
-    echo ""
+    print_banner
 
     if [ "$CHECK_CONFIG" = true ]; then
         run_check_config
