@@ -271,6 +271,24 @@ _strip_colors() {
     printf '%s' "$s"
 }
 
+# Render a row for the panel: literal backslashes are data (escaping them),
+# and only the script's trusted color tokens become ANSI - and only when the
+# terminal supports colors (GREEN non-empty). Prevents echo -e-style escape
+# injection from config-derived values.
+_render() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    if [ -n "$GREEN" ]; then
+        s="${s//\\e[32m/$'\e[32m'}"
+        s="${s//\\e[33m/$'\e[33m'}"
+        s="${s//\\e[34m/$'\e[34m'}"
+        s="${s//\\e[31m/$'\e[31m'}"
+        s="${s//\\e[90m/$'\e[90m'}"
+        s="${s//\\e[0m/$'\e[0m'}"
+    fi
+    printf '%s' "$s"
+}
+
 # Print a pure-ASCII panel around one or more rows. Frame width fits the
 # longest visible row; rows may embed color vars (colors wrap values only).
 print_panel() {
@@ -288,7 +306,7 @@ print_panel() {
     for row in "${rows[@]}"; do
         plain=$(_strip_colors "$row")
         printf '| '
-        echo -en "$row"
+        _render "$row"
         printf '%*s |\n' "$((max - ${#plain}))" ''
     done
     printf '+%s+\n' "$(_dashes $((max + 2)))"
