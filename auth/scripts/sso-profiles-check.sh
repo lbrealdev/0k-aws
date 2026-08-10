@@ -54,10 +54,10 @@ EOF
 
 now() { date +"%Y-%m-%d %H:%M:%S"; }
 
-log_info()  { echo -e "[$(now)] ${BLUE}[INFO]${RESET}  $*"; }
-log_ok()    { echo -e "[$(now)] ${GREEN}[OK]${RESET}    $*"; }
-log_warn()  { echo -e "[$(now)] ${YELLOW}[WARN]${RESET}  $*"; }
-log_error() { echo -e "[$(now)] ${RED}[ERROR]${RESET} $*"; }
+log_info()  { local msg="${*//\\/\\\\}"; echo -e "[$(now)] ${BLUE}[INFO]${RESET}  $msg"; }
+log_ok()    { local msg="${*//\\/\\\\}"; echo -e "[$(now)] ${GREEN}[OK]${RESET}    $msg"; }
+log_warn()  { local msg="${*//\\/\\\\}"; echo -e "[$(now)] ${YELLOW}[WARN]${RESET}  $msg"; }
+log_error() { local msg="${*//\\/\\\\}"; echo -e "[$(now)] ${RED}[ERROR]${RESET} $msg"; }
 
 check_aws_cli() {
     log_info "Checking prerequisites..."
@@ -99,7 +99,7 @@ check_aws_env_vars() {
     if [ ${#found[@]} -gt 0 ]; then
         log_error "AWS environment variables are set. These may interfere with SSO authentication."
         for line in "${found[@]}"; do
-            echo -e "   - $line"
+            echo -e "   - ${line//\\/\\\\}"
         done
         log_info "Unset them with: unset ${AWS_ENV_VARS[*]}"
         exit 1
@@ -260,24 +260,45 @@ _dashes() {
 
 # Strip the script's color variables from $1 (stdout). Used for width math;
 # colors are literal "\e[..m" strings here, expanded only at print time.
+# Use case/"$tok" matching (literal) - not ${s//tok/} - because bash treats
+# the latter as a glob where "\e[31m" also matches data "e[31m".
 _strip_colors() {
-    local s="$1"
-    s="${s//${GREEN}/}"
-    s="${s//${YELLOW}/}"
-    s="${s//${BLUE}/}"
-    s="${s//${RED}/}"
-    s="${s//${GRAY}/}"
-    s="${s//${RESET}/}"
+    local s="$1" tok out rest
+    for tok in "$GREEN" "$YELLOW" "$BLUE" "$RED" "$GRAY" "$RESET"; do
+        [ -z "$tok" ] && continue
+        out=""
+        rest="$s"
+        while [ -n "$rest" ]; do
+            case "$rest" in
+                *"$tok"*)
+                    out+="${rest%%"$tok"*}"
+                    rest="${rest#*"$tok"}"
+                    ;;
+                *)
+                    out+="$rest"
+                    rest=""
+                    ;;
+            esac
+        done
+        s="$out"
+    done
     printf '%s' "$s"
 }
 
-# Render a row for the panel: literal backslashes are data (escaping them),
-# and only the script's trusted color tokens become ANSI - and only when the
-# terminal supports colors (GREEN non-empty). Prevents echo -e-style escape
-# injection from config-derived values.
+# Escape backslashes in DATA (config-derived values) so they can never be
+# misinterpreted as the script's color tokens. Uses a same-length stand-in
+# (ASCII SUB) so width math on the escaped row matches visible output after
+# restore. Doubling alone is insufficient: "\e[31m" still matches inside "\\e".
+_esc_data() {
+    printf '%s' "${1//\\/$'\x1a'}"
+}
+
+# Render a panel row: data backslashes were already escaped by _esc_data at
+# build time, so the ONLY remaining escape-looking sequences are the script's
+# own color tokens - translated to ANSI only when the terminal supports
+# colors (GREEN non-empty). Emits literally via printf '%s'.
 _render() {
     local s="$1"
-    s="${s//\\/\\\\}"
     if [ -n "$GREEN" ]; then
         s="${s//\\e[32m/$'\e[32m'}"
         s="${s//\\e[33m/$'\e[33m'}"
@@ -286,6 +307,7 @@ _render() {
         s="${s//\\e[90m/$'\e[90m'}"
         s="${s//\\e[0m/$'\e[0m'}"
     fi
+    s="${s//$'\x1a'/\\}"
     printf '%s' "$s"
 }
 
@@ -404,16 +426,16 @@ run_check_env() {
     local summary
     case "$found_in" in
         bashrc)
-            summary="Shell default: AWS_PROFILE=${bashrc_profile} (from $BASHRC_FILE)"
+            summary="Shell default: AWS_PROFILE=$(_esc_data "$bashrc_profile") (from $(_esc_data "$BASHRC_FILE"))"
             ;;
         bash_profile)
-            summary="Shell default: AWS_PROFILE=${bash_profile_profile} (from $BASH_PROFILE_FILE)"
+            summary="Shell default: AWS_PROFILE=$(_esc_data "$bash_profile_profile") (from $(_esc_data "$BASH_PROFILE_FILE"))"
             ;;
         both)
-            summary="Shell default: AWS_PROFILE set in both rc files (bashrc=${bashrc_profile}, bash_profile=${bash_profile_profile})"
+            summary="Shell default: AWS_PROFILE set in both rc files (bashrc=$(_esc_data "$bashrc_profile"), bash_profile=$(_esc_data "$bash_profile_profile"))"
             ;;
         *)
-            summary="Shell default: no AWS_PROFILE configured in $BASHRC_FILE or $BASH_PROFILE_FILE"
+            summary="Shell default: no AWS_PROFILE configured in $(_esc_data "$BASHRC_FILE") or $(_esc_data "$BASH_PROFILE_FILE")"
             ;;
     esac
 
@@ -500,7 +522,7 @@ run_check_config() {
     done <<< "$display_rows"
 
     echo ""
-    print_panel "Config-only check: $profile_count SSO profile(s) in $AWS_CONFIG_FILE"
+    print_panel "Config-only check: $profile_count SSO profile(s) in $(_esc_data "$AWS_CONFIG_FILE")"
 }
 
 run_validate() {
