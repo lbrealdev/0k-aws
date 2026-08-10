@@ -76,6 +76,24 @@ aws sso login --profile account-a
 aws sts get-caller-identity --profile account-a
 ```
 
+## Default profile
+
+To skip `export AWS_PROFILE=...` in every new terminal, set a default in your shell startup file:
+
+```bash
+# ~/.bashrc
+export AWS_PROFILE=account-a
+```
+
+On Git Bash, login shells often read `~/.bash_profile` instead of `~/.bashrc`. Source `.bashrc` from there:
+
+```bash
+# ~/.bash_profile
+[ -f ~/.bashrc ] && . ~/.bashrc
+```
+
+Then open a new terminal and run `aws sso login` (no export). Override with `--profile <other>` when you need a different account.
+
 ## Scripts
 
-- [`sso-profiles-check.sh`](./scripts/sso-profiles-check.sh) — validate local SSO profiles can authenticate
+- [`sso-profiles-check.sh`](./scripts/sso-profiles-check.sh) — validate SSO profiles; `--check-config` / `--check-env` for local inspection
