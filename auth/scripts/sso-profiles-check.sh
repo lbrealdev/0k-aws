@@ -28,9 +28,25 @@ Usage: $0 [OPTIONS]
 Validate local AWS SSO profiles can authenticate (STS + account alias),
 or inspect local config / shell defaults without logging in.
 
+  Flow:
+
+   +-------------------------------------+
+   |       sso-profiles-check.sh        |
+   +-------------------------------------+
+                     |
+        +------------+------------+
+        |            |            |
+        v            v            v
+    (default)   --check-config   --check-env
+    validate    list SSO         show AWS_PROFILE
+    profiles    profiles in      shell defaults
+    (STS login) ~/.aws/config    (no login)
+                (no login)
+
 Options:
   --check-config     Inspect ~/.aws/config for SSO profiles; no login required
-  --check-env        Inspect shell defaults for AWS_PROFILE (~/.bashrc, ~/.bash_profile)
+  --check-env        Inspect shell defaults for AWS_PROFILE
+                     (~/.bashrc, ~/.bash_profile)
   --help, -h         Show this help message
 
 EOF
@@ -242,6 +258,42 @@ _dashes() {
     printf '%*s' "$1" '' | tr ' ' '-'
 }
 
+# Strip the script's color variables from $1 (stdout). Used for width math;
+# colors are literal "\e[..m" strings here, expanded only at print time.
+_strip_colors() {
+    local s="$1"
+    s="${s//${GREEN}/}"
+    s="${s//${YELLOW}/}"
+    s="${s//${BLUE}/}"
+    s="${s//${RED}/}"
+    s="${s//${GRAY}/}"
+    s="${s//${RESET}/}"
+    printf '%s' "$s"
+}
+
+# Print a pure-ASCII panel around one or more rows. Frame width fits the
+# longest visible row; rows may embed color vars (colors wrap values only).
+print_panel() {
+    local rows=("$@")
+    local row plain max=0
+
+    for row in "${rows[@]}"; do
+        plain=$(_strip_colors "$row")
+        if [ "${#plain}" -gt "$max" ]; then
+            max=${#plain}
+        fi
+    done
+
+    printf '+%s+\n' "$(_dashes $((max + 2)))"
+    for row in "${rows[@]}"; do
+        plain=$(_strip_colors "$row")
+        printf '| '
+        echo -en "$row"
+        printf '%*s |\n' "$((max - ${#plain}))" ''
+    done
+    printf '+%s+\n' "$(_dashes $((max + 2)))"
+}
+
 # Print first AWS_PROFILE value found in a file (stdout); return 0 if found.
 _find_aws_profile_in_file() {
     local file="$1"
@@ -331,22 +383,24 @@ run_check_env() {
         log_ok "$BASH_PROFILE_FILE sources .bashrc"
     fi
 
-    echo ""
-    echo "---"
+    local summary
     case "$found_in" in
         bashrc)
-            echo "Shell default: AWS_PROFILE=${bashrc_profile} (from $BASHRC_FILE)"
+            summary="Shell default: AWS_PROFILE=${bashrc_profile} (from $BASHRC_FILE)"
             ;;
         bash_profile)
-            echo "Shell default: AWS_PROFILE=${bash_profile_profile} (from $BASH_PROFILE_FILE)"
+            summary="Shell default: AWS_PROFILE=${bash_profile_profile} (from $BASH_PROFILE_FILE)"
             ;;
         both)
-            echo "Shell default: AWS_PROFILE set in both rc files (bashrc=${bashrc_profile}, bash_profile=${bash_profile_profile})"
+            summary="Shell default: AWS_PROFILE set in both rc files (bashrc=${bashrc_profile}, bash_profile=${bash_profile_profile})"
             ;;
         *)
-            echo "Shell default: no AWS_PROFILE configured in $BASHRC_FILE or $BASH_PROFILE_FILE"
+            summary="Shell default: no AWS_PROFILE configured in $BASHRC_FILE or $BASH_PROFILE_FILE"
             ;;
     esac
+
+    echo ""
+    print_panel "$summary"
 }
 
 run_check_config() {
@@ -428,8 +482,7 @@ run_check_config() {
     done <<< "$display_rows"
 
     echo ""
-    echo "---"
-    echo "Config-only check: $profile_count SSO profile(s) in $AWS_CONFIG_FILE"
+    print_panel "Config-only check: $profile_count SSO profile(s) in $AWS_CONFIG_FILE"
 }
 
 run_validate() {
@@ -516,14 +569,31 @@ run_validate() {
     done <<< "$display_rows"
 
     echo ""
-    echo "---"
-    echo "Validated: $profile_count profile(s)"
-    echo -e "Succeeded: ${GREEN}$success_count${RESET}"
-    echo -e "Failed:    ${RED}$failure_count${RESET}"
+    print_panel \
+        "Validated: $profile_count profile(s)" \
+        "Succeeded: ${GREEN}$success_count${RESET}" \
+        "Failed:    ${RED}$failure_count${RESET}"
 
     if [ "$failure_count" -gt 0 ]; then
         exit 1
     fi
+}
+
+# ============================================================================
+# GENERATED ASCII ART - DO NOT EDIT BY HAND
+# Text: "SSO CHECK" / Font: Slant (FIGlet), 52 cols, pure ASCII
+# Source: https://asciified.thelicato.io/api/v2/ascii?text=SSO+CHECK&font=Slant
+# Regenerate: curl -s "<url>" | sed 's/[[:space:]]*$//'  ->  paste below
+# ============================================================================
+print_banner() {
+    cat <<'EOF'
+   __________ ____     ________  ________________ __
+  / ___/ ___// __ \   / ____/ / / / ____/ ____/ //_/
+  \__ \\__ \/ / / /  / /   / /_/ / __/ / /   / ,<
+ ___/ /__/ / /_/ /  / /___/ __  / /___/ /___/ /| |
+/____/____/\____/   \____/_/ /_/_____/\____/_/ |_|
+
+EOF
 }
 
 main() {
@@ -555,10 +625,7 @@ main() {
         exit 1
     fi
 
-    echo "#========================================#"
-    echo "#     AWS SSO PROFILES CHECK SCRIPT      #"
-    echo "#========================================#"
-    echo ""
+    print_banner
 
     if [ "$CHECK_CONFIG" = true ]; then
         run_check_config
