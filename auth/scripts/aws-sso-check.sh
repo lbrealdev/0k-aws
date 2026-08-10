@@ -31,7 +31,7 @@ or inspect local config / shell defaults without logging in.
   Flow:
 
    +-------------------------------------+
-   |       sso-profiles-check.sh        |
+   |          aws-sso-check.sh           |
    +-------------------------------------+
                      |
         +------------+------------+
