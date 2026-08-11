@@ -2,62 +2,65 @@
 
 ## `analyze-billing-alarms.py`
 
-Read-only analysis of CloudWatch **billing** alarms (`AWS/Billing` / `EstimatedCharges`) across one or more AWS profiles. Flags common misconfiguration and noise (low thresholds, missing Currency, broken SNS, unexpected metric shape, cross-account duplicates).
+Read-only **two-round** tool for centralized CloudWatch billing alarms (`AWS/Billing` / `EstimatedCharges`):
+
+1. **`inventory`** — list alarms, classify `WARN` / `CRIT`, map linked accounts, mark WARN as removal candidates.
+2. **`assess`** — for CRIT only, compare thresholds to last-month spend + AWS Budgets.
 
 Implemented as a [uv inline script](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies) (PEP 723) with `boto3`.
 
 Billing metrics are only published in **`us-east-1`**. Prefer `-r us-east-1`.
 
+Concepts and failure codes: [`../billing-alarm-misconfigurations.md`](../billing-alarm-misconfigurations.md).
+
 ### Prerequisites
 
 - [`uv`](https://docs.astral.sh/uv/)
-- AWS credentials (boto3 chain / SSO profiles)
-- IAM: `sts:GetCallerIdentity`, `cloudwatch:DescribeAlarms`, `sns:ListSubscriptionsByTopic`
+- SSO / AWS credentials for the **central** profile (account that holds the alarms)
+- IAM:
+  - `sts:GetCallerIdentity`
+  - `cloudwatch:DescribeAlarms`
+  - `cloudwatch:GetMetricData` (assess)
+  - `budgets:ViewBudget` / `budgets:DescribeBudgets` (assess)
 
 ### Usage
 
 ```bash
-./cloudwatch/scripts/analyze-billing-alarms.py -p <profile> -r us-east-1 [options]
+# Round 1
+./cloudwatch/scripts/analyze-billing-alarms.py inventory -p <central> -r us-east-1 -f json > billing-inventory.json
+
+# Round 2
+./cloudwatch/scripts/analyze-billing-alarms.py assess -p <central> -r us-east-1 --from billing-inventory.json -f markdown
 ```
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--profile` | `-p` | — | AWS profile name |
-| `--profiles` | | — | Comma-separated profiles |
+| (subcommand) | | required | `inventory` or `assess` |
+| `--profile` | `-p` | required | Central AWS profile |
 | `--region` | `-r` | env / `us-east-1` | AWS region |
 | `--format` | `-f` | `table` | `table` \| `json` \| `markdown` |
-| `--min-threshold` | | `10` | Warn when threshold ≤ this (USD) |
+| `--from` | | required for `assess` | Inventory JSON from `inventory -f json` |
 | `--help` | `-h` | | Show help |
 
-At least one of `-p/--profile` or `--profiles` is required.
+### Pairing and signals
+
+- **Severity:** `WARN` / `CRIT` substring in the alarm name.
+- **Linked account:** `LinkedAccount` dimension, else first 12-digit id in the alarm name.
+- **Spend (assess):** previous calendar month **max** `EstimatedCharges` for that linked account (from the central profile).
+- **Budget (assess):** budgets in the central account matched by CostFilters / name containing the account id.
 
 ### Examples
 
 ```bash
-./cloudwatch/scripts/analyze-billing-alarms.py -p master -r us-east-1
-./cloudwatch/scripts/analyze-billing-alarms.py --profiles master,shared -f json
-./cloudwatch/scripts/analyze-billing-alarms.py -p shared -f markdown --min-threshold 50
+./cloudwatch/scripts/analyze-billing-alarms.py inventory -p master -r us-east-1
+./cloudwatch/scripts/analyze-billing-alarms.py inventory -p master -f json > billing-inventory.json
+./cloudwatch/scripts/analyze-billing-alarms.py assess -p master --from billing-inventory.json -f table
 ```
-
-### Finding codes
-
-| Code | Severity | Meaning |
-|------|----------|---------|
-| `WRONG_REGION` | error | Scan region is not `us-east-1` |
-| `MISSING_CURRENCY` | error | No `Currency` dimension |
-| `UNEXPECTED_SHAPE` | warn | Not `EstimatedCharges` + `Maximum` + `GreaterThanOrEqualToThreshold` |
-| `LOW_THRESHOLD` | warn | Threshold ≤ `--min-threshold` |
-| `NO_ACTIONS` | error | No `AlarmActions` |
-| `SNS_TOPIC_MISSING` | error | SNS topic missing / inaccessible |
-| `SNS_NO_SUBSCRIPTIONS` | error | Topic has no subscriptions |
-| `SNS_UNCONFIRMED` | error | Subscription pending confirmation |
-| `STATE_IN_ALARM` | warn | Currently in `ALARM` |
-| `DUPLICATE_CROSS_ACCOUNT` | warn | Same billing shape/threshold in multiple scanned accounts |
 
 ### Exit codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Scan completed (findings are reported in output only) |
+| 0 | Completed (findings/verdicts in output only) |
 | 1 | Usage error |
 | 2 | AWS error |

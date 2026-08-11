@@ -5,19 +5,24 @@
 #   "boto3>=1.34",
 # ]
 # ///
-"""Analyze CloudWatch AWS/Billing alarms for misconfiguration and noise.
+"""Inventory WARN/CRIT CloudWatch billing alarms and assess CRIT thresholds.
 
-Read-only: describe alarms + SNS subscriptions across one or more profiles.
+Round 1 (inventory): classify alarms, map linked accounts, mark WARN for removal.
+Round 2 (assess): compare CRIT thresholds to last-month spend and AWS Budgets.
 """
 
 from __future__ import annotations
 
 import argparse
+import calendar
 import json
 import os
+import re
 import sys
-from collections import defaultdict
+from collections import Counter
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import boto3
@@ -25,6 +30,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 SCRIPT_NAME = "analyze-billing-alarms.py"
 BILLING_REGION = "us-east-1"
+ACCOUNT_ID_RE = re.compile(r"(?<!\d)(\d{12})(?!\d)")
 
 
 def log(msg: str) -> None:
@@ -42,6 +48,12 @@ def resolve_region(cli_region: str | None) -> str:
     return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or BILLING_REGION
 
 
+def require_profile(profile: str | None) -> str:
+    if not profile:
+        die("Provide -p/--profile (central SSO profile that holds the alarms)", 1)
+    return profile
+
+
 @dataclass
 class Finding:
     code: str
@@ -50,9 +62,9 @@ class Finding:
 
 
 @dataclass
-class AlarmRecord:
+class InventoryAlarm:
     profile: str
-    account_id: str
+    scanner_account_id: str
     region: str
     alarm_name: str
     state: str
@@ -66,63 +78,64 @@ class AlarmRecord:
     treat_missing_data: str | None
     currency: str | None
     service_name: str | None
+    linked_account_id: str | None
+    severity: str
     dimensions: dict[str, str]
     alarm_actions: list[str]
-    sns_topics: list[str]
     findings: list[Finding] = field(default_factory=list)
 
     def add_finding(self, code: str, severity: str, detail: str) -> None:
         self.findings.append(Finding(code=code, severity=severity, detail=detail))
 
 
+@dataclass
+class AssessRow:
+    alarm_name: str
+    linked_account_id: str | None
+    threshold: float | None
+    service_name: str | None
+    currency: str | None
+    last_month_peak: float | None
+    budget_limit: float | None
+    budget_name: str | None
+    verdict: str
+    notes: list[str] = field(default_factory=list)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog=SCRIPT_NAME,
         description=(
-            "Analyze CloudWatch AWS/Billing (EstimatedCharges) alarms for "
-            "misconfiguration and noise across one or more AWS profiles."
+            "Two-round billing alarm tool: inventory WARN/CRIT CloudWatch alarms, "
+            "then assess CRIT thresholds vs last-month spend and AWS Budgets."
         ),
     )
-    p.add_argument("-p", "--profile", default=None, help="AWS CLI/boto3 profile")
-    p.add_argument(
-        "--profiles",
-        default=None,
-        help="Comma-separated AWS profiles (scanned in order)",
-    )
-    p.add_argument("-r", "--region", default=None, help="AWS region (billing metrics expect us-east-1)")
-    p.add_argument(
-        "-f",
-        "--format",
-        choices=("table", "json", "markdown"),
-        default="table",
-        help="Output format (default: table)",
-    )
-    p.add_argument(
-        "--min-threshold",
-        type=float,
-        default=10.0,
-        help="Warn when alarm threshold is at or below this USD value (default: 10)",
-    )
-    args = p.parse_args(argv)
-    if args.min_threshold < 0:
-        die("--min-threshold must be >= 0", 1)
-    profiles = resolve_profiles(args.profile, args.profiles)
-    if not profiles:
-        die("Provide -p/--profile and/or --profiles", 1)
-    args.profile_list = profiles
-    return args
+    sub = p.add_subparsers(dest="command", required=True)
 
+    def add_shared(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument("-p", "--profile", default=None, help="Central AWS CLI/boto3 profile")
+        sp.add_argument("-r", "--region", default=None, help="AWS region (billing metrics expect us-east-1)")
+        sp.add_argument(
+            "-f",
+            "--format",
+            choices=("table", "json", "markdown"),
+            default="table",
+            help="Output format (default: table)",
+        )
 
-def resolve_profiles(profile: str | None, profiles: str | None) -> list[str]:
-    out: list[str] = []
-    if profile:
-        out.append(profile.strip())
-    if profiles:
-        for part in profiles.split(","):
-            name = part.strip()
-            if name and name not in out:
-                out.append(name)
-    return out
+    inv = sub.add_parser("inventory", help="Round 1: list billing alarms, WARN/CRIT, linked accounts")
+    add_shared(inv)
+
+    assess = sub.add_parser("assess", help="Round 2: assess CRIT thresholds vs spend/Budgets")
+    add_shared(assess)
+    assess.add_argument(
+        "--from",
+        dest="from_path",
+        required=True,
+        help="Path to inventory JSON from: inventory -f json",
+    )
+
+    return p.parse_args(argv)
 
 
 def dimensions_map(alarm: dict[str, Any]) -> dict[str, str]:
@@ -130,26 +143,31 @@ def dimensions_map(alarm: dict[str, Any]) -> dict[str, str]:
 
 
 def is_billing_alarm(alarm: dict[str, Any]) -> bool:
-    namespace = alarm.get("Namespace")
-    metric = alarm.get("MetricName")
-    return namespace == "AWS/Billing" or metric == "EstimatedCharges"
+    return alarm.get("Namespace") == "AWS/Billing" or alarm.get("MetricName") == "EstimatedCharges"
 
 
-def sns_topic_region(topic_arn: str) -> str | None:
-    # arn:aws:sns:region:account:name
-    parts = topic_arn.split(":")
-    if len(parts) >= 4 and parts[2] == "sns":
-        return parts[3]
-    return None
+def parse_severity(alarm_name: str) -> str:
+    upper = alarm_name.upper()
+    # Prefer CRIT over WARN if both somehow appear; check explicit tokens.
+    has_crit = re.search(r"(?<![A-Z])CRIT(?![A-Z])", upper) is not None
+    has_warn = re.search(r"(?<![A-Z])WARN(?![A-Z])", upper) is not None
+    if has_crit and not has_warn:
+        return "CRIT"
+    if has_warn and not has_crit:
+        return "WARN"
+    if has_crit and has_warn:
+        return "CRIT"
+    return "UNKNOWN"
 
 
-def collect_sns_arns(alarm: dict[str, Any]) -> list[str]:
-    actions: list[str] = []
-    for key in ("AlarmActions", "OKActions", "InsufficientDataActions"):
-        for arn in alarm.get(key) or []:
-            if isinstance(arn, str) and arn.startswith("arn:aws:sns:") and arn not in actions:
-                actions.append(arn)
-    return actions
+def resolve_linked_account(alarm_name: str, dims: dict[str, str]) -> tuple[str | None, str | None]:
+    """Return (linked_account_id, source) where source is dimension|name|None."""
+    if dims.get("LinkedAccount"):
+        return dims["LinkedAccount"], "dimension"
+    match = ACCOUNT_ID_RE.search(alarm_name)
+    if match:
+        return match.group(1), "name"
+    return None, None
 
 
 def list_metric_alarms(cw: Any) -> list[dict[str, Any]]:
@@ -160,93 +178,34 @@ def list_metric_alarms(cw: Any) -> list[dict[str, Any]]:
     return alarms
 
 
-def inspect_sns_topic(session: Any, topic_arn: str, cache: dict[str, list[Finding]]) -> list[Finding]:
-    if topic_arn in cache:
-        return [Finding(f.code, f.severity, f.detail) for f in cache[topic_arn]]
-
-    findings: list[Finding] = []
-    region = sns_topic_region(topic_arn) or BILLING_REGION
-    sns = session.client("sns", region_name=region)
-    try:
-        subs: list[dict[str, Any]] = []
-        next_token: str | None = None
-        while True:
-            kwargs: dict[str, Any] = {"TopicArn": topic_arn}
-            if next_token:
-                kwargs["NextToken"] = next_token
-            resp = sns.list_subscriptions_by_topic(**kwargs)
-            subs.extend(resp.get("Subscriptions") or [])
-            next_token = resp.get("NextToken")
-            if not next_token:
-                break
-    except ClientError as e:
-        code = e.response.get("Error", {}).get("Code", "")
-        if code in {"NotFound", "NotFoundException", "ResourceNotFoundException"}:
-            findings.append(
-                Finding("SNS_TOPIC_MISSING", "error", f"SNS topic not found: {topic_arn}")
-            )
-        else:
-            findings.append(
-                Finding(
-                    "SNS_TOPIC_MISSING",
-                    "error",
-                    f"SNS list_subscriptions_by_topic failed for {topic_arn}: {e}",
-                )
-            )
-        cache[topic_arn] = findings
-        return [Finding(f.code, f.severity, f.detail) for f in findings]
-    except BotoCoreError as e:
-        findings.append(
-            Finding(
-                "SNS_TOPIC_MISSING",
-                "error",
-                f"SNS list_subscriptions_by_topic failed for {topic_arn}: {e}",
-            )
-        )
-        cache[topic_arn] = findings
-        return [Finding(f.code, f.severity, f.detail) for f in findings]
-
-    if not subs:
-        findings.append(
-            Finding("SNS_NO_SUBSCRIPTIONS", "error", f"SNS topic has no subscriptions: {topic_arn}")
-        )
+def previous_calendar_month_window(now: datetime | None = None) -> tuple[datetime, datetime]:
+    now = now or datetime.now(timezone.utc)
+    first_this = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    if now.month == 1:
+        start = datetime(now.year - 1, 12, 1, tzinfo=timezone.utc)
     else:
-        pending = [s for s in subs if s.get("SubscriptionArn") == "PendingConfirmation"]
-        if pending:
-            endpoints = ", ".join(
-                f"{s.get('Protocol')}://{s.get('Endpoint')}" for s in pending
-            )
-            findings.append(
-                Finding(
-                    "SNS_UNCONFIRMED",
-                    "error",
-                    f"SNS topic has unconfirmed subscriptions ({endpoints}): {topic_arn}",
-                )
-            )
-
-    cache[topic_arn] = findings
-    return [Finding(f.code, f.severity, f.detail) for f in findings]
+        start = datetime(now.year, now.month - 1, 1, tzinfo=timezone.utc)
+    return start, first_this
 
 
-def analyze_alarm(
+def make_session(profile: str, region: str) -> Any:
+    return boto3.Session(profile_name=profile, region_name=region)
+
+
+def inventory_alarm_record(
     *,
     alarm: dict[str, Any],
     profile: str,
-    account_id: str,
+    scanner_account_id: str,
     region: str,
-    min_threshold: float,
-    session: Any,
-    sns_cache: dict[str, list[Finding]],
-) -> AlarmRecord:
+) -> InventoryAlarm:
     dims = dimensions_map(alarm)
-    currency = dims.get("Currency")
-    service_name = dims.get("ServiceName")
-    alarm_actions = list(alarm.get("AlarmActions") or [])
-    sns_topics = collect_sns_arns(alarm)
+    linked_account_id, link_source = resolve_linked_account(alarm.get("AlarmName") or "", dims)
+    severity = parse_severity(alarm.get("AlarmName") or "")
 
-    record = AlarmRecord(
+    record = InventoryAlarm(
         profile=profile,
-        account_id=account_id,
+        scanner_account_id=scanner_account_id,
         region=region,
         alarm_name=alarm.get("AlarmName") or "",
         state=alarm.get("StateValue") or "",
@@ -258,11 +217,12 @@ def analyze_alarm(
         threshold=float(alarm["Threshold"]) if alarm.get("Threshold") is not None else None,
         comparison_operator=alarm.get("ComparisonOperator"),
         treat_missing_data=alarm.get("TreatMissingData"),
-        currency=currency,
-        service_name=service_name,
+        currency=dims.get("Currency"),
+        service_name=dims.get("ServiceName"),
+        linked_account_id=linked_account_id,
+        severity=severity,
         dimensions=dims,
-        alarm_actions=alarm_actions,
-        sns_topics=sns_topics,
+        alarm_actions=list(alarm.get("AlarmActions") or []),
     )
 
     if region != BILLING_REGION:
@@ -272,11 +232,30 @@ def analyze_alarm(
             f"Billing alarms must be evaluated in {BILLING_REGION}; scanned region is {region}",
         )
 
-    if not currency:
+    if severity == "WARN":
         record.add_finding(
-            "MISSING_CURRENCY",
+            "WARN_REMOVE_CANDIDATE",
+            "info",
+            "WARN billing alarm — approved removal candidate; keep CRIT only",
+        )
+
+    if not linked_account_id:
+        if "LinkedAccount" not in dims:
+            record.add_finding(
+                "MISSING_LINKED_ACCOUNT",
+                "error",
+                "No LinkedAccount dimension and no 12-digit account id in alarm name",
+            )
+        record.add_finding(
+            "UNMAPPED_ACCOUNT",
             "error",
-            "Alarm is missing the Currency dimension",
+            "Cannot pair alarm to a linked account for spend/Budget assessment",
+        )
+    elif link_source == "name":
+        record.add_finding(
+            "LINKED_ACCOUNT_FROM_NAME",
+            "info",
+            f"Linked account {linked_account_id} inferred from alarm name (no LinkedAccount dimension)",
         )
 
     expected_shape = (
@@ -295,246 +274,475 @@ def analyze_alarm(
             ),
         )
 
-    if record.threshold is not None and record.threshold <= min_threshold:
+    if not dims.get("Currency"):
         record.add_finding(
-            "LOW_THRESHOLD",
+            "MISSING_CURRENCY",
             "warn",
-            f"Threshold {record.threshold} <= min-threshold {min_threshold} (likely always ALARM)",
-        )
-
-    if not alarm_actions:
-        record.add_finding(
-            "NO_ACTIONS",
-            "error",
-            "Alarm has no AlarmActions (nothing is notified on ALARM)",
-        )
-
-    for topic in sns_topics:
-        for finding in inspect_sns_topic(session, topic, sns_cache):
-            # Avoid duplicate codes for the same topic detail
-            if not any(f.code == finding.code and f.detail == finding.detail for f in record.findings):
-                record.findings.append(finding)
-
-    if record.state == "ALARM":
-        record.add_finding(
-            "STATE_IN_ALARM",
-            "warn",
-            "Alarm is currently in ALARM state (noise candidate)",
+            "Alarm is missing the Currency dimension (assessment assumes USD)",
         )
 
     return record
 
 
-def duplicate_key(record: AlarmRecord) -> tuple[Any, ...]:
-    return (
-        record.currency or "",
-        record.service_name or "",
-        record.metric_name or "",
-        record.threshold,
-        record.comparison_operator or "",
-    )
-
-
-def flag_cross_account_duplicates(records: list[AlarmRecord]) -> None:
-    groups: dict[tuple[Any, ...], list[AlarmRecord]] = defaultdict(list)
-    for rec in records:
-        groups[duplicate_key(rec)].append(rec)
-
-    for key, group in groups.items():
-        accounts = {r.account_id for r in group}
-        if len(accounts) < 2:
-            continue
-        # Prefer groups that share SNS overlap, else still flag same shape/threshold
-        sns_sets = [set(r.sns_topics) for r in group]
-        overlapping = False
-        for i, a in enumerate(sns_sets):
-            for b in sns_sets[i + 1 :]:
-                if a and b and a.intersection(b):
-                    overlapping = True
-                    break
-            if overlapping:
-                break
-
-        account_list = ", ".join(sorted(accounts))
-        detail = (
-            f"Same billing shape across accounts [{account_list}] "
-            f"(Currency={key[0] or 'n/a'}, ServiceName={key[1] or 'n/a'}, "
-            f"threshold={key[3]}, comparison={key[4]})"
-        )
-        if overlapping:
-            detail += "; overlapping SNS topics"
-        for rec in group:
-            rec.add_finding("DUPLICATE_CROSS_ACCOUNT", "warn", detail)
-
-
-def scan_profile(
-    profile: str,
-    region: str,
-    min_threshold: float,
-) -> tuple[str, list[AlarmRecord]]:
-    session_kwargs: dict[str, Any] = {"region_name": region}
-    if profile:
-        session_kwargs["profile_name"] = profile
-
-    log(f"Profile: {profile or '(default)'} | region: {region}")
+def run_inventory(profile: str, region: str) -> dict[str, Any]:
+    log(f"inventory | profile={profile} region={region}")
     try:
-        session = boto3.Session(**session_kwargs)
+        session = make_session(profile, region)
         sts = session.client("sts")
         identity = sts.get_caller_identity()
-        account_id = identity["Account"]
-        log(f"Account: {account_id} ({identity.get('Arn')})")
+        scanner_account_id = identity["Account"]
+        log(f"Scanner account: {scanner_account_id}")
         cw = session.client("cloudwatch", region_name=region)
         alarms = list_metric_alarms(cw)
     except (ClientError, BotoCoreError) as e:
-        die(f"AWS error for profile '{profile}': {e}", 2)
+        die(f"AWS error during inventory: {e}", 2)
 
     billing = [a for a in alarms if is_billing_alarm(a)]
     log(f"Found {len(billing)} billing alarm(s) of {len(alarms)} metric alarm(s)")
 
-    sns_cache: dict[str, list[Finding]] = {}
-    records: list[AlarmRecord] = []
-    for alarm in billing:
-        records.append(
-            analyze_alarm(
-                alarm=alarm,
-                profile=profile,
-                account_id=account_id,
-                region=region,
-                min_threshold=min_threshold,
-                session=session,
-                sns_cache=sns_cache,
-            )
+    records = [
+        inventory_alarm_record(
+            alarm=a,
+            profile=profile,
+            scanner_account_id=scanner_account_id,
+            region=region,
         )
-    return account_id, records
-
-
-def count_findings(records: list[AlarmRecord]) -> dict[str, int]:
-    counts = {"error": 0, "warn": 0, "info": 0}
-    for rec in records:
-        for f in rec.findings:
-            counts[f.severity] = counts.get(f.severity, 0) + 1
-    return counts
-
-
-def build_ctx(
-    *,
-    region: str,
-    profiles: list[str],
-    accounts: list[dict[str, str]],
-    records: list[AlarmRecord],
-    min_threshold: float,
-) -> dict[str, Any]:
-    finding_counts = count_findings(records)
-    alarms_with_findings = sum(1 for r in records if r.findings)
-    summary = [
-        f"Scanned {len(profiles)} profile(s) / {len(accounts)} account(s) in {region}.",
-        f"Billing alarms: {len(records)} total; {alarms_with_findings} with findings.",
-        (
-            f"Findings: {finding_counts.get('error', 0)} error, "
-            f"{finding_counts.get('warn', 0)} warn "
-            f"(min-threshold={min_threshold})."
-        ),
+        for a in billing
     ]
+
+    by_severity = Counter(r.severity for r in records)
+    warn_removal = sum(1 for r in records if r.severity == "WARN")
+    unmapped = sum(1 for r in records if not r.linked_account_id)
+    per_account: dict[str, int] = Counter(
+        r.linked_account_id or "UNMAPPED" for r in records
+    )
+
+    summary = [
+        f"Scanned central profile {profile} (account {scanner_account_id}) in {region}.",
+        (
+            f"Billing alarms: {len(records)} "
+            f"(CRIT={by_severity.get('CRIT', 0)}, WARN={by_severity.get('WARN', 0)}, "
+            f"UNKNOWN={by_severity.get('UNKNOWN', 0)})."
+        ),
+        f"WARN removal candidates: {warn_removal}. Unmapped alarms: {unmapped}.",
+        "CRIT thresholds are assessed in round 2: assess --from <inventory.json>.",
+    ]
+
     return {
+        "command": "inventory",
         "region": region,
-        "profiles": profiles,
-        "accounts": accounts,
-        "min_threshold": min_threshold,
+        "profile": profile,
+        "scanner_account_id": scanner_account_id,
         "alarm_count": len(records),
-        "alarms_with_findings": alarms_with_findings,
-        "finding_counts": finding_counts,
+        "by_severity": dict(by_severity),
+        "warn_removal_count": warn_removal,
+        "unmapped_count": unmapped,
+        "per_account_counts": dict(sorted(per_account.items())),
         "summary": summary,
         "alarms": records,
     }
 
 
-def fmt_dims(rec: AlarmRecord) -> str:
-    parts = []
-    if rec.currency:
-        parts.append(f"Currency={rec.currency}")
-    if rec.service_name:
-        parts.append(f"ServiceName={rec.service_name}")
-    return ", ".join(parts) if parts else "n/a"
+def load_inventory(path: str) -> dict[str, Any]:
+    p = Path(path)
+    if not p.is_file():
+        die(f"Inventory file not found: {path}", 1)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        die(f"Invalid inventory JSON: {e}", 1)
+    if data.get("command") != "inventory" or "alarms" not in data:
+        die("Inventory JSON must be produced by: inventory -f json", 1)
+    return data
 
 
-def fmt_findings(rec: AlarmRecord) -> str:
-    if not rec.findings:
-        return "(none)"
-    return "; ".join(f"[{f.severity}] {f.code}: {f.detail}" for f in rec.findings)
+def fetch_last_month_peak(
+    cw: Any,
+    *,
+    linked_account_id: str,
+    currency: str,
+    service_name: str | None,
+    start: datetime,
+    end: datetime,
+) -> float | None:
+    dims = [
+        {"Name": "Currency", "Value": currency},
+        {"Name": "LinkedAccount", "Value": linked_account_id},
+    ]
+    if service_name:
+        dims.append({"Name": "ServiceName", "Value": service_name})
+
+    # Period 1 day; billing updates infrequently.
+    period = 86400
+    try:
+        resp = cw.get_metric_data(
+            StartTime=start,
+            EndTime=end,
+            MetricDataQueries=[
+                {
+                    "Id": "est",
+                    "MetricStat": {
+                        "Metric": {
+                            "Namespace": "AWS/Billing",
+                            "MetricName": "EstimatedCharges",
+                            "Dimensions": dims,
+                        },
+                        "Period": period,
+                        "Stat": "Maximum",
+                    },
+                    "ReturnData": True,
+                }
+            ],
+        )
+    except (ClientError, BotoCoreError) as e:
+        log(f"GetMetricData failed for {linked_account_id}: {e}")
+        return None
+
+    values: list[float] = []
+    for result in resp.get("MetricDataResults") or []:
+        values.extend(float(v) for v in result.get("Values") or [])
+    if not values:
+        return None
+    return max(values)
 
 
-def emit_table(ctx: dict[str, Any]) -> None:
-    print("Billing CloudWatch Alarms Analysis")
-    print("=" * 34)
+def iter_budgets(budgets: Any, account_id: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    next_token: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {"AccountId": account_id}
+        if next_token:
+            kwargs["NextToken"] = next_token
+        resp = budgets.describe_budgets(**kwargs)
+        out.extend(resp.get("Budgets") or [])
+        next_token = resp.get("NextToken")
+        if not next_token:
+            break
+    return out
+
+
+def budget_limit_amount(budget: dict[str, Any]) -> float | None:
+    limit = budget.get("BudgetLimit") or {}
+    amount = limit.get("Amount")
+    if amount is None:
+        return None
+    try:
+        return float(amount)
+    except (TypeError, ValueError):
+        return None
+
+
+def budget_linked_accounts(budget: dict[str, Any]) -> set[str]:
+    accounts: set[str] = set()
+    filters = budget.get("CostFilters") or {}
+    for key in ("LinkedAccount", "LinkedAccountId"):
+        for value in filters.get(key) or []:
+            if isinstance(value, str) and ACCOUNT_ID_RE.fullmatch(value):
+                accounts.add(value)
+    name = budget.get("BudgetName") or ""
+    for match in ACCOUNT_ID_RE.finditer(name):
+        accounts.add(match.group(1))
+    return accounts
+
+
+def match_budget(
+    budgets_list: list[dict[str, Any]],
+    linked_account_id: str,
+) -> tuple[str | None, float | None]:
+    matches: list[tuple[str, float]] = []
+    for budget in budgets_list:
+        if linked_account_id not in budget_linked_accounts(budget):
+            continue
+        amount = budget_limit_amount(budget)
+        if amount is None:
+            continue
+        matches.append((budget.get("BudgetName") or "", amount))
+    if not matches:
+        return None, None
+    # Prefer the smallest matching cost budget as the intended account cap.
+    matches.sort(key=lambda x: x[1])
+    return matches[0]
+
+
+def classify_crit(
+    *,
+    threshold: float | None,
+    last_month_peak: float | None,
+    budget_limit: float | None,
+) -> tuple[str, list[str]]:
+    notes: list[str] = []
+    if threshold is None:
+        return "NO_SPEND_SIGNAL", ["CRIT alarm has no threshold"]
+
+    if last_month_peak is None and budget_limit is None:
+        return "NO_SPEND_SIGNAL", ["No last-month EstimatedCharges datapoints and no matching Budget"]
+
+    verdict: str | None = None
+
+    if last_month_peak is not None and last_month_peak > 0:
+        ratio = threshold / last_month_peak
+        notes.append(f"threshold/last_month_peak={ratio:.2f}")
+        if threshold <= 0.5 * last_month_peak:
+            verdict = "CRIT_TOO_LOW"
+            notes.append("Threshold ≤ 50% of last month peak — fires early most months")
+        elif threshold <= 1.10 * last_month_peak:
+            verdict = "CRIT_AT_BASELINE"
+            notes.append("Threshold within ~0–10% of normal month — weak CRIT / month-end noise")
+        elif threshold <= 1.30 * last_month_peak:
+            verdict = "CRIT_OK_HEADROOM"
+            notes.append("Threshold 10–30% above last month peak — reasonable overspend headroom")
+        else:
+            verdict = "CRIT_TOO_HIGH"
+            notes.append("Threshold > 30% above last month peak — may never protect")
+    elif budget_limit is not None and budget_limit > 0:
+        # No metric; use budget bands as proxy for OK headroom.
+        low = budget_limit * 1.10
+        high = budget_limit * 1.20
+        notes.append("Using Budget only (no last-month peak)")
+        if threshold <= 0.5 * budget_limit:
+            verdict = "CRIT_TOO_LOW"
+        elif threshold < low:
+            verdict = "CRIT_AT_BASELINE"
+        elif threshold <= high:
+            verdict = "CRIT_OK_HEADROOM"
+        else:
+            verdict = "CRIT_TOO_HIGH"
+
+    if (
+        budget_limit is not None
+        and budget_limit > 0
+        and threshold is not None
+        and abs(threshold - budget_limit) / budget_limit > 0.25
+    ):
+        notes.append(
+            f"CloudWatch CRIT ({threshold}) drifts >25% from Budget limit ({budget_limit})"
+        )
+        if verdict in {None, "CRIT_OK_HEADROOM"}:
+            return "CRIT_VS_BUDGET_DRIFT", notes
+        notes.append("Also flagged CRIT_VS_BUDGET_DRIFT condition")
+
+    if budget_limit is not None and last_month_peak is not None:
+        suggested = max(budget_limit * 1.1, last_month_peak * 1.1)
+        notes.append(
+            f"Suggested CRIT band ≈ 110–120% of expected month "
+            f"(~{suggested:.0f} using max(budget×1.1, peak×1.1))"
+        )
+
+    return verdict or "NO_SPEND_SIGNAL", notes
+
+
+def run_assess(profile: str, region: str, inventory: dict[str, Any]) -> dict[str, Any]:
+    log(f"assess | profile={profile} region={region}")
+    crit_alarms = [
+        a
+        for a in inventory.get("alarms") or []
+        if (a.get("severity") == "CRIT")
+    ]
+    log(f"CRIT alarms in inventory: {len(crit_alarms)}")
+
+    try:
+        session = make_session(profile, region)
+        sts = session.client("sts")
+        identity = sts.get_caller_identity()
+        scanner_account_id = identity["Account"]
+        log(f"Scanner account: {scanner_account_id}")
+        cw = session.client("cloudwatch", region_name=region)
+        budgets_client = session.client("budgets", region_name=BILLING_REGION)
+        budgets_list = iter_budgets(budgets_client, scanner_account_id)
+        log(f"Budgets visible in central account: {len(budgets_list)}")
+    except (ClientError, BotoCoreError) as e:
+        die(f"AWS error during assess: {e}", 2)
+
+    start, end = previous_calendar_month_window()
+    log(
+        f"Spend window: {start.date()} → {end.date()} "
+        f"({calendar.month_name[start.month]} {start.year})"
+    )
+
+    # Cache peaks by (account, currency, service)
+    peak_cache: dict[tuple[str, str, str | None], float | None] = {}
+    rows: list[AssessRow] = []
+
+    for alarm in crit_alarms:
+        linked = alarm.get("linked_account_id")
+        currency = alarm.get("currency") or "USD"
+        service_name = alarm.get("service_name")
+        threshold = alarm.get("threshold")
+        if isinstance(threshold, str):
+            try:
+                threshold = float(threshold)
+            except ValueError:
+                threshold = None
+
+        last_month_peak: float | None = None
+        budget_name: str | None = None
+        budget_limit: float | None = None
+
+        if linked:
+            cache_key = (linked, currency, service_name)
+            if cache_key not in peak_cache:
+                peak_cache[cache_key] = fetch_last_month_peak(
+                    cw,
+                    linked_account_id=linked,
+                    currency=currency,
+                    service_name=service_name,
+                    start=start,
+                    end=end,
+                )
+            last_month_peak = peak_cache[cache_key]
+            budget_name, budget_limit = match_budget(budgets_list, linked)
+            verdict, notes = classify_crit(
+                threshold=threshold,
+                last_month_peak=last_month_peak,
+                budget_limit=budget_limit,
+            )
+        else:
+            verdict = "UNMAPPED_ACCOUNT"
+            notes = ["CRIT alarm has no linked account — cannot assess spend/Budget"]
+
+        rows.append(
+            AssessRow(
+                alarm_name=alarm.get("alarm_name") or "",
+                linked_account_id=linked,
+                threshold=threshold,
+                service_name=service_name,
+                currency=currency,
+                last_month_peak=last_month_peak,
+                budget_limit=budget_limit,
+                budget_name=budget_name,
+                verdict=verdict,
+                notes=notes,
+            )
+        )
+
+    by_verdict = Counter(r.verdict for r in rows)
+    summary = [
+        f"Assessed {len(rows)} CRIT alarm(s) via profile {profile} (account {scanner_account_id}).",
+        f"Spend basis: max EstimatedCharges for previous calendar month ({start.strftime('%Y-%m')}).",
+        f"Verdicts: {', '.join(f'{k}={v}' for k, v in sorted(by_verdict.items())) or 'none'}.",
+        (
+            "Guidance: for ~$9–10k monthly spend, CRIT ≈ 110–120% of expected month "
+            "(or budget×1.1–1.2) — not $10/$1k, and not exactly the normal month total."
+        ),
+    ]
+
+    return {
+        "command": "assess",
+        "region": region,
+        "profile": profile,
+        "scanner_account_id": scanner_account_id,
+        "spend_month": start.strftime("%Y-%m"),
+        "inventory_alarm_count": inventory.get("alarm_count"),
+        "crit_count": len(rows),
+        "by_verdict": dict(by_verdict),
+        "summary": summary,
+        "assessments": rows,
+    }
+
+
+def emit_inventory_table(ctx: dict[str, Any]) -> None:
+    print("Billing Alarms Inventory (WARN / CRIT)")
+    print("=" * 38)
     for line in ctx["summary"]:
         print(f" - {line}")
+    print()
+    print("Per linked account:")
+    for account, count in (ctx.get("per_account_counts") or {}).items():
+        print(f" - {account}: {count}")
     print()
     if not ctx["alarms"]:
         print("No billing alarms found.")
         return
-
     for rec in ctx["alarms"]:
+        findings = (
+            "; ".join(f"[{f.severity}] {f.code}: {f.detail}" for f in rec.findings)
+            if rec.findings
+            else "(none)"
+        )
         print(f"Alarm: {rec.alarm_name}")
-        print(f"  Profile/Account: {rec.profile} / {rec.account_id}")
-        print(f"  State: {rec.state}")
-        print(
-            f"  Metric: {rec.namespace}/{rec.metric_name} "
-            f"stat={rec.statistic} period={rec.period} "
-            f"eval={rec.evaluation_periods}"
-        )
-        print(
-            f"  Condition: {rec.comparison_operator} {rec.threshold} "
-            f"(treat_missing_data={rec.treat_missing_data})"
-        )
-        print(f"  Dimensions: {fmt_dims(rec)}")
-        print(f"  SNS: {', '.join(rec.sns_topics) if rec.sns_topics else '(none)'}")
-        print(f"  Findings: {fmt_findings(rec)}")
+        print(f"  Severity: {rec.severity} | State: {rec.state}")
+        print(f"  LinkedAccount: {rec.linked_account_id or 'UNMAPPED'}")
+        print(f"  Threshold: {rec.threshold} | Metric: {rec.namespace}/{rec.metric_name}")
+        print(f"  ServiceName: {rec.service_name or 'n/a'} | Currency: {rec.currency or 'n/a'}")
+        print(f"  Findings: {findings}")
         print()
 
 
-def emit_markdown(ctx: dict[str, Any]) -> None:
-    print("# Billing CloudWatch Alarms Analysis")
+def emit_inventory_markdown(ctx: dict[str, Any]) -> None:
+    print("# Billing Alarms Inventory (WARN / CRIT)")
     print()
     for line in ctx["summary"]:
         print(f"- {line}")
     print()
-    if not ctx["alarms"]:
-        print("_No billing alarms found._")
-        return
-
-    print("| Account | Alarm | State | Threshold | Dimensions | Findings |")
-    print("|---------|-------|-------|-----------|------------|----------|")
+    print("| Severity | Linked account | Alarm | Threshold | State | Findings |")
+    print("|----------|----------------|-------|-----------|-------|----------|")
     for rec in ctx["alarms"]:
         findings = (
-            "<br>".join(f"`{f.severity}` `{f.code}`: {f.detail}" for f in rec.findings)
-            if rec.findings
-            else "_none_"
+            "<br>".join(f"`{f.code}`" for f in rec.findings) if rec.findings else "_none_"
         )
-        dims = fmt_dims(rec).replace("|", "\\|")
         print(
-            f"| {rec.account_id} (`{rec.profile}`) | `{rec.alarm_name}` | {rec.state} | "
-            f"{rec.threshold} | {dims} | {findings} |"
+            f"| {rec.severity} | `{rec.linked_account_id or 'UNMAPPED'}` | "
+            f"`{rec.alarm_name}` | {rec.threshold} | {rec.state} | {findings} |"
+        )
+
+
+def emit_assess_table(ctx: dict[str, Any]) -> None:
+    print("Billing CRIT Threshold Assessment")
+    print("=" * 34)
+    for line in ctx["summary"]:
+        print(f" - {line}")
+    print()
+    if not ctx["assessments"]:
+        print("No CRIT alarms to assess.")
+        return
+    for row in ctx["assessments"]:
+        print(f"Alarm: {row.alarm_name}")
+        print(f"  Account: {row.linked_account_id or 'UNMAPPED'}")
+        print(
+            f"  CRIT threshold: {row.threshold} | "
+            f"last_month_peak: {row.last_month_peak} | "
+            f"budget: {row.budget_limit} ({row.budget_name or 'n/a'})"
+        )
+        print(f"  Verdict: {row.verdict}")
+        if row.notes:
+            for note in row.notes:
+                print(f"   - {note}")
+        print()
+
+
+def emit_assess_markdown(ctx: dict[str, Any]) -> None:
+    print("# Billing CRIT Threshold Assessment")
+    print()
+    for line in ctx["summary"]:
+        print(f"- {line}")
+    print()
+    print(
+        "| Account | Alarm | CRIT threshold | Last month peak | Budget | Verdict | Notes |"
+    )
+    print(
+        "|---------|-------|----------------|-----------------|--------|---------|-------|"
+    )
+    for row in ctx["assessments"]:
+        notes = "<br>".join(row.notes) if row.notes else "_none_"
+        print(
+            f"| `{row.linked_account_id or 'UNMAPPED'}` | `{row.alarm_name}` | "
+            f"{row.threshold} | {row.last_month_peak} | "
+            f"{row.budget_limit} | `{row.verdict}` | {notes} |"
         )
 
 
 def emit_json(ctx: dict[str, Any]) -> None:
-    payload = {
-        "region": ctx["region"],
-        "profiles": ctx["profiles"],
-        "accounts": ctx["accounts"],
-        "min_threshold": ctx["min_threshold"],
-        "summary": ctx["summary"],
-        "alarm_count": ctx["alarm_count"],
-        "alarms_with_findings": ctx["alarms_with_findings"],
-        "finding_counts": ctx["finding_counts"],
-        "alarms": [
+    payload = dict(ctx)
+    if "alarms" in payload:
+        payload["alarms"] = [
             {
-                **{k: v for k, v in asdict(rec).items() if k != "findings"},
-                "findings": [asdict(f) for f in rec.findings],
+                **{k: v for k, v in asdict(a).items() if k != "findings"},
+                "findings": [asdict(f) for f in a.findings],
             }
-            for rec in ctx["alarms"]
-        ],
-    }
+            for a in payload["alarms"]
+        ]
+    if "assessments" in payload:
+        payload["assessments"] = [asdict(a) for a in payload["assessments"]]
     print(json.dumps(payload, indent=2))
 
 
@@ -544,6 +752,7 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as e:
         return int(e.code) if isinstance(e.code, int) else 1
 
+    profile = require_profile(args.profile)
     region = resolve_region(args.region)
     if region != BILLING_REGION:
         log(
@@ -551,29 +760,26 @@ def main(argv: list[str] | None = None) -> int:
             f"using {region} as requested"
         )
 
-    all_records: list[AlarmRecord] = []
-    accounts: list[dict[str, str]] = []
+    if args.command == "inventory":
+        ctx = run_inventory(profile, region)
+        log("Done.")
+        print("", file=sys.stderr)
+        if args.format == "table":
+            emit_inventory_table(ctx)
+        elif args.format == "markdown":
+            emit_inventory_markdown(ctx)
+        else:
+            emit_json(ctx)
+        return 0
 
-    for profile in args.profile_list:
-        account_id, records = scan_profile(profile, region, args.min_threshold)
-        accounts.append({"profile": profile, "account_id": account_id})
-        all_records.extend(records)
-
-    flag_cross_account_duplicates(all_records)
-    ctx = build_ctx(
-        region=region,
-        profiles=args.profile_list,
-        accounts=accounts,
-        records=all_records,
-        min_threshold=args.min_threshold,
-    )
-
+    inventory = load_inventory(args.from_path)
+    ctx = run_assess(profile, region, inventory)
     log("Done.")
     print("", file=sys.stderr)
     if args.format == "table":
-        emit_table(ctx)
+        emit_assess_table(ctx)
     elif args.format == "markdown":
-        emit_markdown(ctx)
+        emit_assess_markdown(ctx)
     else:
         emit_json(ctx)
     return 0
