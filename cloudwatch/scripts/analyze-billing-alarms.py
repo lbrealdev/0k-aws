@@ -5,10 +5,10 @@
 #   "boto3>=1.34",
 # ]
 # ///
-"""Inventory WARN/CRIT CloudWatch billing alarms and assess CRIT thresholds.
+"""Inventory WARN/CRIT CloudWatch billing alarms and assess thresholds.
 
 Round 1 (inventory): classify alarms, map linked accounts, mark WARN for removal.
-Round 2 (assess): compare CRIT thresholds to last-month spend and AWS Budgets.
+Round 2 (assess): compare each alarm threshold to last-month spend and AWS Budgets.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ ACCOUNT_ID_RE = re.compile(r"(?<!\d)(\d{12})(?!\d)")
 
 
 def log(msg: str) -> None:
-    print(f"→ {msg}", file=sys.stderr)
+    print(f"-> {msg}", file=sys.stderr)
 
 
 def die(msg: str, code: int) -> None:
@@ -91,6 +91,7 @@ class InventoryAlarm:
 @dataclass
 class AssessRow:
     alarm_name: str
+    severity: str
     linked_account_id: str | None
     threshold: float | None
     service_name: str | None
@@ -98,6 +99,7 @@ class AssessRow:
     last_month_peak: float | None
     budget_limit: float | None
     budget_name: str | None
+    suggested_crit: float | None
     verdict: str
     notes: list[str] = field(default_factory=list)
 
@@ -107,7 +109,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog=SCRIPT_NAME,
         description=(
             "Two-round billing alarm tool: inventory WARN/CRIT CloudWatch alarms, "
-            "then assess CRIT thresholds vs last-month spend and AWS Budgets."
+            "then assess thresholds vs last-month spend and AWS Budgets."
         ),
     )
     sub = p.add_subparsers(dest="command", required=True)
@@ -120,13 +122,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "--format",
             choices=("table", "json", "markdown"),
             default="table",
-            help="Output format (default: table)",
+            help="Output format (default: table). markdown requires -o/--output",
+        )
+        sp.add_argument(
+            "-o",
+            "--output",
+            default=None,
+            help="Write report to PATH (UTF-8). Required for -f markdown",
         )
 
     inv = sub.add_parser("inventory", help="Round 1: list billing alarms, WARN/CRIT, linked accounts")
     add_shared(inv)
 
-    assess = sub.add_parser("assess", help="Round 2: assess CRIT thresholds vs spend/Budgets")
+    assess = sub.add_parser("assess", help="Round 2: assess all alarm thresholds vs spend/Budgets")
     add_shared(assess)
     assess.add_argument(
         "--from",
@@ -148,7 +156,6 @@ def is_billing_alarm(alarm: dict[str, Any]) -> bool:
 
 def parse_severity(alarm_name: str) -> str:
     upper = alarm_name.upper()
-    # Prefer CRIT over WARN if both somehow appear; check explicit tokens.
     has_crit = re.search(r"(?<![A-Z])CRIT(?![A-Z])", upper) is not None
     has_warn = re.search(r"(?<![A-Z])WARN(?![A-Z])", upper) is not None
     if has_crit and not has_warn:
@@ -190,6 +197,20 @@ def previous_calendar_month_window(now: datetime | None = None) -> tuple[datetim
 
 def make_session(profile: str, region: str) -> Any:
     return boto3.Session(profile_name=profile, region_name=region)
+
+
+def suggested_crit_from_signals(
+    last_month_peak: float | None,
+    budget_limit: float | None,
+) -> float | None:
+    candidates: list[float] = []
+    if last_month_peak is not None and last_month_peak > 0:
+        candidates.append(last_month_peak)
+    if budget_limit is not None and budget_limit > 0:
+        candidates.append(budget_limit)
+    if not candidates:
+        return None
+    return max(candidates) * 1.1
 
 
 def inventory_alarm_record(
@@ -236,7 +257,7 @@ def inventory_alarm_record(
         record.add_finding(
             "WARN_REMOVE_CANDIDATE",
             "info",
-            "WARN billing alarm — approved removal candidate; keep CRIT only",
+            "WARN billing alarm - approved removal candidate; keep CRIT only",
         )
 
     if not linked_account_id:
@@ -325,7 +346,7 @@ def run_inventory(profile: str, region: str) -> dict[str, Any]:
             f"UNKNOWN={by_severity.get('UNKNOWN', 0)})."
         ),
         f"WARN removal candidates: {warn_removal}. Unmapped alarms: {unmapped}.",
-        "CRIT thresholds are assessed in round 2: assess --from <inventory.json>.",
+        "Thresholds for all alarms are assessed in round 2: assess --from <inventory.json>.",
     ]
 
     return {
@@ -372,7 +393,6 @@ def fetch_last_month_peak(
     if service_name:
         dims.append({"Name": "ServiceName", "Value": service_name})
 
-    # Period 1 day; billing updates infrequently.
     period = 86400
     try:
         resp = cw.get_metric_data(
@@ -459,23 +479,28 @@ def match_budget(
         matches.append((budget.get("BudgetName") or "", amount))
     if not matches:
         return None, None
-    # Prefer the smallest matching cost budget as the intended account cap.
     matches.sort(key=lambda x: x[1])
     return matches[0]
 
 
-def classify_crit(
+def classify_threshold(
     *,
     threshold: float | None,
     last_month_peak: float | None,
     budget_limit: float | None,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str], float | None]:
     notes: list[str] = []
+    suggested = suggested_crit_from_signals(last_month_peak, budget_limit)
+
     if threshold is None:
-        return "NO_SPEND_SIGNAL", ["CRIT alarm has no threshold"]
+        return "NO_SPEND_SIGNAL", ["Alarm has no threshold"], suggested
 
     if last_month_peak is None and budget_limit is None:
-        return "NO_SPEND_SIGNAL", ["No last-month EstimatedCharges datapoints and no matching Budget"]
+        return (
+            "NO_SPEND_SIGNAL",
+            ["No last-month EstimatedCharges datapoints and no matching Budget"],
+            None,
+        )
 
     verdict: str | None = None
 
@@ -484,18 +509,17 @@ def classify_crit(
         notes.append(f"threshold/last_month_peak={ratio:.2f}")
         if threshold <= 0.5 * last_month_peak:
             verdict = "CRIT_TOO_LOW"
-            notes.append("Threshold ≤ 50% of last month peak — fires early most months")
+            notes.append("Threshold <= 50% of last month peak - fires early most months")
         elif threshold <= 1.10 * last_month_peak:
             verdict = "CRIT_AT_BASELINE"
-            notes.append("Threshold within ~0–10% of normal month — weak CRIT / month-end noise")
+            notes.append("Threshold within ~0-10% of last month peak - weak / month-end noise")
         elif threshold <= 1.30 * last_month_peak:
             verdict = "CRIT_OK_HEADROOM"
-            notes.append("Threshold 10–30% above last month peak — reasonable overspend headroom")
+            notes.append("Threshold 10-30% above last month peak - reasonable overspend headroom")
         else:
             verdict = "CRIT_TOO_HIGH"
-            notes.append("Threshold > 30% above last month peak — may never protect")
+            notes.append("Threshold > 30% above last month peak - may never protect")
     elif budget_limit is not None and budget_limit > 0:
-        # No metric; use budget bands as proxy for OK headroom.
         low = budget_limit * 1.10
         high = budget_limit * 1.20
         notes.append("Using Budget only (no last-month peak)")
@@ -515,30 +539,24 @@ def classify_crit(
         and abs(threshold - budget_limit) / budget_limit > 0.25
     ):
         notes.append(
-            f"CloudWatch CRIT ({threshold}) drifts >25% from Budget limit ({budget_limit})"
+            f"CloudWatch threshold ({threshold}) drifts >25% from Budget limit ({budget_limit})"
         )
         if verdict in {None, "CRIT_OK_HEADROOM"}:
-            return "CRIT_VS_BUDGET_DRIFT", notes
+            return "CRIT_VS_BUDGET_DRIFT", notes, suggested
         notes.append("Also flagged CRIT_VS_BUDGET_DRIFT condition")
 
-    if budget_limit is not None and last_month_peak is not None:
-        suggested = max(budget_limit * 1.1, last_month_peak * 1.1)
+    if suggested is not None:
         notes.append(
-            f"Suggested CRIT band ≈ 110–120% of expected month "
-            f"(~{suggested:.0f} using max(budget×1.1, peak×1.1))"
+            f"suggested_crit={suggested:.2f} from max(last_month_peak, budget_limit) x 1.1"
         )
 
-    return verdict or "NO_SPEND_SIGNAL", notes
+    return verdict or "NO_SPEND_SIGNAL", notes, suggested
 
 
 def run_assess(profile: str, region: str, inventory: dict[str, Any]) -> dict[str, Any]:
     log(f"assess | profile={profile} region={region}")
-    crit_alarms = [
-        a
-        for a in inventory.get("alarms") or []
-        if (a.get("severity") == "CRIT")
-    ]
-    log(f"CRIT alarms in inventory: {len(crit_alarms)}")
+    alarms = list(inventory.get("alarms") or [])
+    log(f"Alarms in inventory: {len(alarms)}")
 
     try:
         session = make_session(profile, region)
@@ -555,16 +573,16 @@ def run_assess(profile: str, region: str, inventory: dict[str, Any]) -> dict[str
 
     start, end = previous_calendar_month_window()
     log(
-        f"Spend window: {start.date()} → {end.date()} "
+        f"Spend window: {start.date()} -> {end.date()} "
         f"({calendar.month_name[start.month]} {start.year})"
     )
 
-    # Cache peaks by (account, currency, service)
     peak_cache: dict[tuple[str, str, str | None], float | None] = {}
     rows: list[AssessRow] = []
 
-    for alarm in crit_alarms:
+    for alarm in alarms:
         linked = alarm.get("linked_account_id")
+        severity = alarm.get("severity") or "UNKNOWN"
         currency = alarm.get("currency") or "USD"
         service_name = alarm.get("service_name")
         threshold = alarm.get("threshold")
@@ -577,6 +595,13 @@ def run_assess(profile: str, region: str, inventory: dict[str, Any]) -> dict[str
         last_month_peak: float | None = None
         budget_name: str | None = None
         budget_limit: float | None = None
+        suggested: float | None = None
+        notes: list[str] = []
+
+        if severity == "WARN":
+            notes.append("WARN_REMOVE_CANDIDATE - approved removal candidate")
+        elif severity == "UNKNOWN":
+            notes.append("UNKNOWN_SEVERITY - alarm name has no WARN/CRIT token")
 
         if linked:
             cache_key = (linked, currency, service_name)
@@ -591,18 +616,20 @@ def run_assess(profile: str, region: str, inventory: dict[str, Any]) -> dict[str
                 )
             last_month_peak = peak_cache[cache_key]
             budget_name, budget_limit = match_budget(budgets_list, linked)
-            verdict, notes = classify_crit(
+            verdict, class_notes, suggested = classify_threshold(
                 threshold=threshold,
                 last_month_peak=last_month_peak,
                 budget_limit=budget_limit,
             )
+            notes.extend(class_notes)
         else:
             verdict = "UNMAPPED_ACCOUNT"
-            notes = ["CRIT alarm has no linked account — cannot assess spend/Budget"]
+            notes.append("Alarm has no linked account - cannot assess spend/Budget")
 
         rows.append(
             AssessRow(
                 alarm_name=alarm.get("alarm_name") or "",
+                severity=severity,
                 linked_account_id=linked,
                 threshold=threshold,
                 service_name=service_name,
@@ -610,20 +637,23 @@ def run_assess(profile: str, region: str, inventory: dict[str, Any]) -> dict[str
                 last_month_peak=last_month_peak,
                 budget_limit=budget_limit,
                 budget_name=budget_name,
+                suggested_crit=suggested,
                 verdict=verdict,
                 notes=notes,
             )
         )
 
     by_verdict = Counter(r.verdict for r in rows)
+    by_severity = Counter(r.severity for r in rows)
     summary = [
-        f"Assessed {len(rows)} CRIT alarm(s) via profile {profile} (account {scanner_account_id}).",
+        f"Assessed {len(rows)} alarm(s) via profile {profile} (account {scanner_account_id}).",
+        (
+            f"By severity: CRIT={by_severity.get('CRIT', 0)}, "
+            f"WARN={by_severity.get('WARN', 0)}, "
+            f"UNKNOWN={by_severity.get('UNKNOWN', 0)}."
+        ),
         f"Spend basis: max EstimatedCharges for previous calendar month ({start.strftime('%Y-%m')}).",
         f"Verdicts: {', '.join(f'{k}={v}' for k, v in sorted(by_verdict.items())) or 'none'}.",
-        (
-            "Guidance: for ~$9–10k monthly spend, CRIT ≈ 110–120% of expected month "
-            "(or budget×1.1–1.2) — not $10/$1k, and not exactly the normal month total."
-        ),
     ]
 
     return {
@@ -633,105 +663,15 @@ def run_assess(profile: str, region: str, inventory: dict[str, Any]) -> dict[str
         "scanner_account_id": scanner_account_id,
         "spend_month": start.strftime("%Y-%m"),
         "inventory_alarm_count": inventory.get("alarm_count"),
-        "crit_count": len(rows),
+        "assessed_count": len(rows),
+        "by_severity": dict(by_severity),
         "by_verdict": dict(by_verdict),
         "summary": summary,
         "assessments": rows,
     }
 
 
-def emit_inventory_table(ctx: dict[str, Any]) -> None:
-    print("Billing Alarms Inventory (WARN / CRIT)")
-    print("=" * 38)
-    for line in ctx["summary"]:
-        print(f" - {line}")
-    print()
-    print("Per linked account:")
-    for account, count in (ctx.get("per_account_counts") or {}).items():
-        print(f" - {account}: {count}")
-    print()
-    if not ctx["alarms"]:
-        print("No billing alarms found.")
-        return
-    for rec in ctx["alarms"]:
-        findings = (
-            "; ".join(f"[{f.severity}] {f.code}: {f.detail}" for f in rec.findings)
-            if rec.findings
-            else "(none)"
-        )
-        print(f"Alarm: {rec.alarm_name}")
-        print(f"  Severity: {rec.severity} | State: {rec.state}")
-        print(f"  LinkedAccount: {rec.linked_account_id or 'UNMAPPED'}")
-        print(f"  Threshold: {rec.threshold} | Metric: {rec.namespace}/{rec.metric_name}")
-        print(f"  ServiceName: {rec.service_name or 'n/a'} | Currency: {rec.currency or 'n/a'}")
-        print(f"  Findings: {findings}")
-        print()
-
-
-def emit_inventory_markdown(ctx: dict[str, Any]) -> None:
-    print("# Billing Alarms Inventory (WARN / CRIT)")
-    print()
-    for line in ctx["summary"]:
-        print(f"- {line}")
-    print()
-    print("| Severity | Linked account | Alarm | Threshold | State | Findings |")
-    print("|----------|----------------|-------|-----------|-------|----------|")
-    for rec in ctx["alarms"]:
-        findings = (
-            "<br>".join(f"`{f.code}`" for f in rec.findings) if rec.findings else "_none_"
-        )
-        print(
-            f"| {rec.severity} | `{rec.linked_account_id or 'UNMAPPED'}` | "
-            f"`{rec.alarm_name}` | {rec.threshold} | {rec.state} | {findings} |"
-        )
-
-
-def emit_assess_table(ctx: dict[str, Any]) -> None:
-    print("Billing CRIT Threshold Assessment")
-    print("=" * 34)
-    for line in ctx["summary"]:
-        print(f" - {line}")
-    print()
-    if not ctx["assessments"]:
-        print("No CRIT alarms to assess.")
-        return
-    for row in ctx["assessments"]:
-        print(f"Alarm: {row.alarm_name}")
-        print(f"  Account: {row.linked_account_id or 'UNMAPPED'}")
-        print(
-            f"  CRIT threshold: {row.threshold} | "
-            f"last_month_peak: {row.last_month_peak} | "
-            f"budget: {row.budget_limit} ({row.budget_name or 'n/a'})"
-        )
-        print(f"  Verdict: {row.verdict}")
-        if row.notes:
-            for note in row.notes:
-                print(f"   - {note}")
-        print()
-
-
-def emit_assess_markdown(ctx: dict[str, Any]) -> None:
-    print("# Billing CRIT Threshold Assessment")
-    print()
-    for line in ctx["summary"]:
-        print(f"- {line}")
-    print()
-    print(
-        "| Account | Alarm | CRIT threshold | Last month peak | Budget | Verdict | Notes |"
-    )
-    print(
-        "|---------|-------|----------------|-----------------|--------|---------|-------|"
-    )
-    for row in ctx["assessments"]:
-        notes = "<br>".join(row.notes) if row.notes else "_none_"
-        print(
-            f"| `{row.linked_account_id or 'UNMAPPED'}` | `{row.alarm_name}` | "
-            f"{row.threshold} | {row.last_month_peak} | "
-            f"{row.budget_limit} | `{row.verdict}` | {notes} |"
-        )
-
-
-def emit_json(ctx: dict[str, Any]) -> None:
+def ctx_to_json_payload(ctx: dict[str, Any]) -> dict[str, Any]:
     payload = dict(ctx)
     if "alarms" in payload:
         payload["alarms"] = [
@@ -743,7 +683,147 @@ def emit_json(ctx: dict[str, Any]) -> None:
         ]
     if "assessments" in payload:
         payload["assessments"] = [asdict(a) for a in payload["assessments"]]
-    print(json.dumps(payload, indent=2))
+    return payload
+
+
+def render_inventory_table(ctx: dict[str, Any]) -> str:
+    lines: list[str] = [
+        "Billing Alarms Inventory (WARN / CRIT)",
+        "=" * 38,
+    ]
+    for line in ctx["summary"]:
+        lines.append(f" - {line}")
+    lines.append("")
+    lines.append("Per linked account:")
+    for account, count in (ctx.get("per_account_counts") or {}).items():
+        lines.append(f" - {account}: {count}")
+    lines.append("")
+    if not ctx["alarms"]:
+        lines.append("No billing alarms found.")
+        return "\n".join(lines) + "\n"
+
+    for rec in ctx["alarms"]:
+        findings = (
+            "; ".join(f"[{f.severity}] {f.code}: {f.detail}" for f in rec.findings)
+            if rec.findings
+            else "(none)"
+        )
+        lines.extend(
+            [
+                f"Alarm: {rec.alarm_name}",
+                f"  Severity: {rec.severity} | State: {rec.state}",
+                f"  LinkedAccount: {rec.linked_account_id or 'UNMAPPED'}",
+                f"  Threshold: {rec.threshold} | Metric: {rec.namespace}/{rec.metric_name}",
+                f"  ServiceName: {rec.service_name or 'n/a'} | Currency: {rec.currency or 'n/a'}",
+                f"  Findings: {findings}",
+                "",
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
+def render_inventory_markdown(ctx: dict[str, Any]) -> str:
+    lines: list[str] = ["# Billing Alarms Inventory (WARN / CRIT)", ""]
+    for line in ctx["summary"]:
+        lines.append(f"- {line}")
+    lines.append("")
+    lines.append("| Severity | Linked account | Alarm | Threshold | State | Findings |")
+    lines.append("|----------|----------------|-------|-----------|-------|----------|")
+    for rec in ctx["alarms"]:
+        findings = (
+            "<br>".join(f"`{f.code}`" for f in rec.findings) if rec.findings else "_none_"
+        )
+        lines.append(
+            f"| {rec.severity} | `{rec.linked_account_id or 'UNMAPPED'}` | "
+            f"`{rec.alarm_name}` | {rec.threshold} | {rec.state} | {findings} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def render_assess_table(ctx: dict[str, Any]) -> str:
+    lines: list[str] = [
+        "Billing Alarm Threshold Assessment",
+        "=" * 35,
+    ]
+    for line in ctx["summary"]:
+        lines.append(f" - {line}")
+    lines.append("")
+    if not ctx["assessments"]:
+        lines.append("No alarms to assess.")
+        return "\n".join(lines) + "\n"
+
+    for row in ctx["assessments"]:
+        lines.extend(
+            [
+                f"Alarm: {row.alarm_name}",
+                f"  Severity: {row.severity} | Account: {row.linked_account_id or 'UNMAPPED'}",
+                (
+                    f"  Threshold: {row.threshold} | "
+                    f"last_month_peak: {row.last_month_peak} | "
+                    f"budget: {row.budget_limit} ({row.budget_name or 'n/a'}) | "
+                    f"suggested_crit: {row.suggested_crit}"
+                ),
+                f"  Verdict: {row.verdict}",
+            ]
+        )
+        for note in row.notes:
+            lines.append(f"   - {note}")
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def render_assess_markdown(ctx: dict[str, Any]) -> str:
+    lines: list[str] = ["# Billing Alarm Threshold Assessment", ""]
+    for line in ctx["summary"]:
+        lines.append(f"- {line}")
+    lines.append("")
+    lines.append(
+        "| Severity | Account | Alarm | Threshold | Last month peak | Budget | "
+        "Suggested CRIT | Verdict | Notes |"
+    )
+    lines.append(
+        "|----------|---------|-------|-----------|-----------------|--------|"
+        "----------------|---------|-------|"
+    )
+    for row in ctx["assessments"]:
+        notes = "<br>".join(row.notes) if row.notes else "_none_"
+        lines.append(
+            f"| {row.severity} | `{row.linked_account_id or 'UNMAPPED'}` | `{row.alarm_name}` | "
+            f"{row.threshold} | {row.last_month_peak} | {row.budget_limit} | "
+            f"{row.suggested_crit} | `{row.verdict}` | {notes} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def render_json(ctx: dict[str, Any]) -> str:
+    return json.dumps(ctx_to_json_payload(ctx), indent=2) + "\n"
+
+
+def write_report(text: str, output: str | None, fmt: str) -> None:
+    if fmt == "markdown" and not output:
+        die("markdown format requires -o/--output PATH (does not print to the terminal)", 1)
+
+    if output:
+        path = Path(output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        log(f"Wrote {path}")
+        return
+
+    # table / json without -o: stdout
+    sys.stdout.write(text)
+
+
+def render_report(command: str, ctx: dict[str, Any], fmt: str) -> str:
+    if fmt == "json":
+        return render_json(ctx)
+    if command == "inventory":
+        if fmt == "markdown":
+            return render_inventory_markdown(ctx)
+        return render_inventory_table(ctx)
+    if fmt == "markdown":
+        return render_assess_markdown(ctx)
+    return render_assess_table(ctx)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -754,6 +834,8 @@ def main(argv: list[str] | None = None) -> int:
 
     profile = require_profile(args.profile)
     region = resolve_region(args.region)
+    if args.format == "markdown" and not args.output:
+        die("markdown format requires -o/--output PATH (does not print to the terminal)", 1)
     if region != BILLING_REGION:
         log(
             f"Warning: billing metrics are only published in {BILLING_REGION}; "
@@ -763,25 +845,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "inventory":
         ctx = run_inventory(profile, region)
         log("Done.")
-        print("", file=sys.stderr)
-        if args.format == "table":
-            emit_inventory_table(ctx)
-        elif args.format == "markdown":
-            emit_inventory_markdown(ctx)
-        else:
-            emit_json(ctx)
+        write_report(render_report("inventory", ctx, args.format), args.output, args.format)
         return 0
 
     inventory = load_inventory(args.from_path)
     ctx = run_assess(profile, region, inventory)
     log("Done.")
-    print("", file=sys.stderr)
-    if args.format == "table":
-        emit_assess_table(ctx)
-    elif args.format == "markdown":
-        emit_assess_markdown(ctx)
-    else:
-        emit_json(ctx)
+    write_report(render_report("assess", ctx, args.format), args.output, args.format)
     return 0
 
 

@@ -1,8 +1,10 @@
 # Billing alarm misconfigurations
 
-Notes for CloudWatch `AWS/Billing` / `EstimatedCharges` alarms used as WARN/CRIT spend alerts — especially when alarms are **centralized** in a payer/shared account and represent many linked accounts.
+Notes for CloudWatch `AWS/Billing` / `EstimatedCharges` alarms used as WARN/CRIT spend alerts - especially when alarms are **centralized** in a payer/shared account and represent many linked accounts.
 
 Use with [`scripts/analyze-billing-alarms.py`](./scripts/analyze-billing-alarms.py) (`inventory` then `assess`).
+
+The script reports **live AWS data only** (alarm thresholds, last-month `EstimatedCharges`, Budgets). It does **not** inject example dollar amounts into inventory or assessment output.
 
 ## How EstimatedCharges behaves
 
@@ -14,36 +16,36 @@ Use with [`scripts/analyze-billing-alarms.py`](./scripts/analyze-billing-alarms.
 
 ## WARN vs CRIT
 
-Naming convention in this org (example):
+Naming convention in this org (example pattern only):
 
 `billing-…-estimatedcharges-WARN` / `billing-…-estimatedcharges-CRIT`
 
 | Severity | Intent | Current policy |
 |----------|--------|----------------|
-| WARN | Early warning / softer threshold | **Approved for removal** — keep CRIT only |
+| WARN | Early warning / softer threshold | **Approved for removal** - keep CRIT only |
 | CRIT | Hard / overspend signal | Keep and **right-size** the threshold |
 
 ## Misconcepts (common failures)
 
-1. **Treating MTD as a burst metric** — CloudWatch billing alarms do not detect short spikes the way EC2 CPU alarms do.
-2. **CRIT ≈ normal monthly spend** — if the account usually ends the month near $10k, a CRIT at $10k alarms on a *normal* month, not overspend.
-3. **Tiny reused thresholds** — CRIT at $10 or $1k on a ~$9–10k account fires early every month (`CRIT_TOO_LOW`).
-4. **No account pairing** — centralized alarms without `LinkedAccount` (and without a 12-digit account id in the name) cannot be validated against that account’s spend.
-5. **Ignoring Budgets** — AWS Budgets (actual/forecast %) often express the real agreed cap; CloudWatch CRIT should not drift far from that story.
-6. **Member vs payer confusion** — member accounts only see their own charges; org-wide / linked-account views belong on the payer with `LinkedAccount`.
+1. **Treating MTD as a burst metric** - CloudWatch billing alarms do not detect short spikes the way EC2 CPU alarms do.
+2. **CRIT ~= normal monthly spend** - if the threshold is set at a typical month-end total, the alarm fires on a *normal* month, not overspend.
+3. **Tiny reused thresholds** - a CRIT far below real monthly spend fires early every month (`CRIT_TOO_LOW`).
+4. **No account pairing** - centralized alarms without `LinkedAccount` (and without a 12-digit account id in the name) cannot be validated against that account's spend.
+5. **Ignoring Budgets** - AWS Budgets (actual/forecast %) often express the real agreed cap; CloudWatch thresholds should not drift far from that story.
+6. **Member vs payer confusion** - member accounts only see their own charges; org-wide / linked-account views belong on the payer with `LinkedAccount`.
 
-## Threshold guidance
+## Threshold guidance (illustrative only)
 
-For an account that typically spends about **$9k–$10k/month**:
+The dollar figures below are **examples to explain the bands**, not defaults used by the script. Real assessments use each account's last-month peak and/or Budget limit.
 
-| Setting | Example | Assessment |
+| Pattern | Meaning | Assessment |
 |---------|---------|------------|
-| CRIT $10 or $1k | Far below normal month | Too low — fires early (`CRIT_TOO_LOW`) |
-| CRIT $10k | ≈ normal month total | At baseline — weak CRIT / month-end noise (`CRIT_AT_BASELINE`) |
-| CRIT ~$11k–$12k | ≈ 110–120% of expected month (or budget×1.1–1.2) | Sensible overspend headroom (`CRIT_OK_HEADROOM`) |
-| CRIT much higher | Rarely trips | Too high / weak protection (`CRIT_TOO_HIGH`) |
+| Threshold much lower than typical monthly spend | Fires early most months | `CRIT_TOO_LOW` |
+| Threshold near typical month-end total | Alarms on a normal month | `CRIT_AT_BASELINE` |
+| Threshold ~10-30% above typical spend (or ~budget x 1.1-1.2) | Overspend headroom | `CRIT_OK_HEADROOM` |
+| Threshold far above typical spend / budget | Rarely trips | `CRIT_TOO_HIGH` |
 
-Primary spend signal used by the script: **previous calendar month maximum** `EstimatedCharges` for the linked account. Secondary: matching **AWS Budget** limit on the central account.
+Primary spend signal used by the script: **previous calendar month maximum** `EstimatedCharges` for the linked account. Secondary: matching **AWS Budget** limit on the central account. Per-row `suggested_crit` = `max(last_month_peak, budget_limit) * 1.1` when those signals exist.
 
 ## Finding / verdict codes
 
@@ -51,9 +53,9 @@ Primary spend signal used by the script: **previous calendar month maximum** `Es
 
 | Code | Severity | Meaning |
 |------|----------|---------|
-| `WARN_REMOVE_CANDIDATE` | info | WARN alarm — removal candidate |
+| `WARN_REMOVE_CANDIDATE` | info | WARN alarm - removal candidate |
 | `MISSING_LINKED_ACCOUNT` | error | No `LinkedAccount` dimension and no account id in name |
-| `UNMAPPED_ACCOUNT` | error | Cannot pair alarm → account |
+| `UNMAPPED_ACCOUNT` | error | Cannot pair alarm to account |
 | `LINKED_ACCOUNT_FROM_NAME` | info | Account id inferred from alarm name |
 | `UNEXPECTED_SHAPE` | warn | Not EstimatedCharges + Maximum + >= threshold |
 | `MISSING_CURRENCY` | warn | No `Currency` dimension |
@@ -61,17 +63,21 @@ Primary spend signal used by the script: **previous calendar month maximum** `Es
 
 ### Assess (`assess`)
 
+Assesses **all** inventory alarms (WARN, CRIT, UNKNOWN).
+
 | Verdict | Meaning |
 |---------|---------|
-| `CRIT_TOO_LOW` | Threshold ≤ 50% of last-month peak (or ≪ budget) |
-| `CRIT_AT_BASELINE` | Threshold within ~0–10% of last-month peak |
-| `CRIT_OK_HEADROOM` | Threshold ~10–30% above peak (or ~budget×1.1–1.2) |
+| `CRIT_TOO_LOW` | Threshold <= 50% of last-month peak (or much below budget) |
+| `CRIT_AT_BASELINE` | Threshold within ~0-10% of last-month peak |
+| `CRIT_OK_HEADROOM` | Threshold ~10-30% above peak (or ~budget x 1.1-1.2) |
 | `CRIT_TOO_HIGH` | Threshold > 30% above peak and not justified |
-| `CRIT_VS_BUDGET_DRIFT` | CRIT and Budget limit differ by > 25% |
+| `CRIT_VS_BUDGET_DRIFT` | Threshold and Budget limit differ by > 25% |
 | `NO_SPEND_SIGNAL` | No metric datapoints and no matching Budget |
-| `UNMAPPED_ACCOUNT` | CRIT row has no linked account |
+| `UNMAPPED_ACCOUNT` | Alarm row has no linked account |
+
+WARN rows also note `WARN_REMOVE_CANDIDATE`. UNKNOWN severity is called out when the name has no WARN/CRIT token.
 
 ## Related
 
-- [`scripts/README.md`](./scripts/README.md) — CLI for `inventory` / `assess`
-- [auth/](../auth/README.md) — SSO profiles for the central account
+- [`scripts/README.md`](./scripts/README.md) - CLI for `inventory` / `assess`
+- [auth/](../auth/README.md) - SSO profiles for the central account
