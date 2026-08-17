@@ -71,3 +71,62 @@ Reports use **live AWS values only** (no hard-coded example dollar amounts).
 | 0 | Completed (findings/verdicts in output only) |
 | 1 | Usage error |
 | 2 | AWS error |
+
+---
+
+## `review-account-billing.py`
+
+Read-only **per-account** review using **two SSO profiles**:
+
+1. **Master (`-p`)** — CloudWatch billing alarms + Budgets for the target account  
+2. **Target (`-t`)** — Cost Explorer UnblendedCost for last 1/3/6 complete months + MTD (1st → today)
+
+Prints a **plain-text** report on stdout (PrettyTable for tabular sections) with verdict `NORMAL` / `ABNORMAL` / `INSUFFICIENT_DATA`. No `-f` / markdown / `-o` in v1.
+
+Implemented as a uv inline script with `boto3` and [prettytable](https://pypi.org/project/prettytable/).
+
+### Prerequisites
+
+- [`uv`](https://docs.astral.sh/uv/)
+- SSO login for master and target profiles
+- IAM:
+  - Master: `sts:GetCallerIdentity`, `cloudwatch:DescribeAlarms`, `budgets:ViewBudget` / `DescribeBudgets`
+  - Target: `sts:GetCallerIdentity`, `ce:GetCostAndUsage`
+
+### Usage
+
+```bash
+./cloudwatch/scripts/review-account-billing.py -p master -t project-a -r us-east-1
+
+# Optional: focus budgets whose name contains a substring
+./cloudwatch/scripts/review-account-billing.py -p master -t project-a --budget-name Breached
+```
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--profile` | `-p` | required | Master (payer) profile |
+| `--target-profile` | `-t` | required | Target member profile |
+| `--region` | `-r` | env / `us-east-1` | CloudWatch region |
+| `--months` | | `6` | Complete months of CE history |
+| `--budget-name` | | — | Substring filter on budget name |
+| `--help` | `-h` | | Show help |
+
+Profiles only select accounts; alarms, budgets, and spend are **discovered** for the target account id from STS.
+
+### Verdict (v1)
+
+Using complete-month UnblendedCost series (up to `--months`):
+
+- **ABNORMAL** if any month is > 1.5x or < 0.5x the median (when median > 0)
+- **NORMAL** otherwise
+- **INSUFFICIENT_DATA** if fewer than 2 months of data
+
+MTD vs budget limit is shown for information; it does not alone force ABNORMAL.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Completed |
+| 1 | Usage error |
+| 2 | AWS error |
