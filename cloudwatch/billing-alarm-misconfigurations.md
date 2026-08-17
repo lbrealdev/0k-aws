@@ -22,8 +22,8 @@ Naming convention in this org (example pattern only):
 
 | Severity | Intent | Current policy |
 |----------|--------|----------------|
-| WARN | Early warning / softer threshold | **Approved for removal** - keep CRIT only |
-| CRIT | Hard / overspend signal | Keep and **right-size** the threshold |
+| WARN | Early warning / softer threshold | Sometimes proposed for removal; treat as **unconfirmed** until the org decides |
+| CRIT | Hard / overspend signal | Usually keep and **right-size** (or align with dynamic Budgets) |
 
 ## Misconcepts (common failures)
 
@@ -53,7 +53,7 @@ Primary spend signal used by the script: **previous calendar month maximum** `Es
 
 | Code | Severity | Meaning |
 |------|----------|---------|
-| `WARN_REMOVE_CANDIDATE` | info | WARN alarm - removal candidate |
+| `WARN_REMOVE_CANDIDATE` | info | WARN-labelled alarm (policy may mark for removal later; not an approved decision by itself) |
 | `MISSING_LINKED_ACCOUNT` | error | No `LinkedAccount` dimension and no account id in name |
 | `UNMAPPED_ACCOUNT` | error | Cannot pair alarm to account |
 | `LINKED_ACCOUNT_FROM_NAME` | info | Account id inferred from alarm name |
