@@ -1,10 +1,11 @@
 # CloudWatch
 
-Operational guides and read-only helpers for Amazon CloudWatch — especially **centralized billing alarms** (WARN/CRIT) that represent many linked accounts.
+Operational guides and read-only helpers for Amazon CloudWatch — especially **payer-central** billing alarms and how they relate to dynamic AWS Budgets.
 
 ## Guides
 
-- [Billing alarm misconfigurations](./billing-alarm-misconfigurations.md) — MTD/threshold misconceptions, WARN vs CRIT policy, finding/verdict codes
+- [Billing alarm misconfigurations](./billing-alarm-misconfigurations.md) — MTD/threshold misconceptions, WARN vs CRIT labels, finding/verdict codes
+- [Payer-central dynamic budgets use case](./billing-dynamic-budgets-usecase.md) — sanitized architecture: management-account budgets/alerts, monthly Lambda refresh, open CloudWatch dynamism questions
 
 ## Scripts
 
