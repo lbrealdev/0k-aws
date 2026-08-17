@@ -9,6 +9,8 @@
 """Review one member account: master CloudWatch/Budgets + target Cost Explorer spend.
 
 Plain-text stdout report with PrettyTable sections and NORMAL/ABNORMAL verdict.
+
+Exit codes: 0 completed, 1 usage, 2 AWS error, 3 ABNORMAL (only with --exit-abnormal).
 """
 
 from __future__ import annotations
@@ -16,7 +18,10 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shlex
 import sys
+import textwrap
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from statistics import median
@@ -74,6 +79,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--budget-name",
         default=None,
         help="Optional substring filter on budget name after account matching",
+    )
+    p.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="ANSI color: auto (TTY only), always, or never (default auto)",
+    )
+    p.add_argument(
+        "--exit-abnormal",
+        action="store_true",
+        help="Exit with code 3 when the verdict is ABNORMAL",
     )
     args = p.parse_args(argv)
     if args.months < 1:
@@ -386,6 +402,58 @@ def classify_spend(months: list[MonthSpend]) -> tuple[str, str]:
     return "NORMAL", f"All months within 0.5x-1.5x of median {med:.2f}"
 
 
+ANSI_RESET = "\033[0m"
+ANSI_GREEN = "\033[32m"
+ANSI_RED = "\033[31m"
+ANSI_YELLOW = "\033[33m"
+ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+VERDICT_STYLE = {
+    "NORMAL": ("✓", "[OK]", ANSI_GREEN),
+    "ABNORMAL": ("✗", "[ALERT]", ANSI_RED),
+    "INSUFFICIENT_DATA": ("?", "[NO DATA]", ANSI_YELLOW),
+}
+STATUS_COLOR = {
+    "OK": ANSI_GREEN,
+    "WATCH": ANSI_YELLOW,
+    "BREACH": ANSI_RED,
+}
+
+
+def color_enabled(mode: str) -> bool:
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    return sys.stdout.isatty()
+
+
+def reconstruct_command(argv: list[str] | None) -> str:
+    if argv is None:
+        parts = list(sys.argv)
+    else:
+        parts = list(argv)
+    if not parts:
+        parts = [SCRIPT_NAME]
+    else:
+        base = os.path.basename(parts[0])
+        if "review-account-billing" in base:
+            parts = [SCRIPT_NAME, *parts[1:]]
+        else:
+            parts = [SCRIPT_NAME, *parts]
+    return " ".join(shlex.quote(p) for p in parts)
+
+
+def paint(text: str, color: str, enabled: bool) -> str:
+    if not enabled:
+        return text
+    return f"{color}{text}{ANSI_RESET}"
+
+
+def visible_len(s: str) -> int:
+    return len(ANSI_RE.sub("", s))
+
+
 def fmt_money(v: float | None) -> str:
     if v is None:
         return "n/a"
@@ -396,6 +464,145 @@ def pct(part: float | None, whole: float | None) -> str:
     if part is None or whole is None or whole <= 0:
         return "n/a"
     return f"{(part / whole) * 100:.1f}%"
+
+
+def money_display(v: float | None) -> str:
+    if v is None:
+        return "n/a"
+    return f"${fmt_money(v)}"
+
+
+def aligned_fields(pairs: list[tuple[str, str]], indent: str = "") -> list[str]:
+    if not pairs:
+        return []
+    width = max(len(k) for k, _ in pairs)
+    return [f"{indent}{k.ljust(width)}: {v}" for k, v in pairs]
+
+
+def section_header(title: str, underline: str = "-") -> list[str]:
+    return [title, underline * len(title)]
+
+
+def wrap_prefixed(prefix: str, text: str, *, hang: int, width: int = 78) -> list[str]:
+    wrapper = textwrap.TextWrapper(
+        width=width,
+        initial_indent=prefix,
+        subsequent_indent=" " * hang,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    wrapped = wrapper.wrap(text)
+    return wrapped or [prefix.rstrip()]
+
+
+def month_abbr(yyyy_mm: str) -> str:
+    try:
+        return datetime.strptime(yyyy_mm, "%Y-%m").strftime("%b")
+    except ValueError:
+        return yyyy_mm
+
+
+def mtd_span_label(today: date) -> str:
+    return f"{today.strftime('%b')} 1-{today.day}"
+
+
+def monthly_limit_of(b: BudgetRow) -> tuple[float | None, bool, str | None]:
+    if b.limit is None:
+        return None, False, b.time_unit
+    tu = (b.time_unit or "").upper()
+    if tu == "QUARTERLY":
+        return b.limit / 3.0, True, b.time_unit
+    if tu == "ANNUALLY":
+        return b.limit / 12.0, True, b.time_unit
+    return b.limit, False, b.time_unit
+
+
+def budget_usage_amount(b: BudgetRow, mtd: float) -> float:
+    actual_val = b.actual if b.actual is not None else mtd
+    if b.forecast is not None:
+        return max(actual_val, b.forecast)
+    return actual_val
+
+
+def budget_status(b: BudgetRow, mtd: float) -> str:
+    monthly, _, _ = monthly_limit_of(b)
+    if monthly is None or monthly <= 0:
+        return "n/a"
+    ratio = budget_usage_amount(b, mtd) / monthly
+    if ratio > 1.0:
+        return "BREACH"
+    if ratio >= 0.8:
+        return "WATCH"
+    return "OK"
+
+
+def format_status_cell(status: str, enabled: bool) -> str:
+    color = STATUS_COLOR.get(status)
+    if color is None:
+        return status
+    return paint(status, color, enabled)
+
+
+def complete_month_sum(months: list[MonthSpend], n: int) -> float | None:
+    if len(months) < n:
+        return None
+    return sum(m.amount for m in months[-n:])
+
+
+def format_sums_line(months: list[MonthSpend], months_requested: int) -> str | None:
+    parts: list[str] = []
+    windows: list[int] = [1, 3]
+    if months_requested not in windows:
+        windows.append(months_requested)
+    for n in windows:
+        total = complete_month_sum(months, n)
+        if total is None:
+            continue
+        parts.append(f"{n}M={money_display(total)}")
+    if not parts:
+        return None
+    return "Sums: " + "  ".join(parts)
+
+
+def make_table(field_names: list[str], rows: list[list[str]], right: set[str]) -> PrettyTable:
+    t = PrettyTable()
+    t.field_names = field_names
+    t.align = "l"
+    for col in right:
+        if col in field_names:
+            t.align[col] = "r"
+    for row in rows:
+        t.add_row(row)
+    return t
+
+
+def format_verdict_banner(verdict: str, reason: str, enabled: bool) -> list[str]:
+    symbol, tag, color = VERDICT_STYLE.get(verdict, ("?", "[?]", ANSI_YELLOW))
+    head = f"VERDICT: {symbol} {tag} {verdict}"
+    painted = paint(head, color, enabled)
+    plain = f"{head}   {reason}"
+    wrapped = textwrap.wrap(
+        plain,
+        width=78,
+        subsequent_indent="   ",
+        break_long_words=False,
+        break_on_hyphens=False,
+    ) or [plain]
+    wrapped[0] = wrapped[0].replace(head, painted, 1)
+    wrapped.append("-" * visible_len(wrapped[0]))
+    return wrapped
+
+
+def worst_budget_usage(budgets: list[BudgetRow], mtd: float) -> tuple[float, str] | None:
+    worst: tuple[float, str] | None = None
+    for b in budgets:
+        monthly, _, _ = monthly_limit_of(b)
+        if monthly is None or monthly <= 0:
+            continue
+        ratio = budget_usage_amount(b, mtd) / monthly
+        if worst is None or ratio > worst[0]:
+            worst = (ratio, b.name)
+    return worst
 
 
 def render_report(
@@ -412,24 +619,58 @@ def render_report(
     months_requested: int,
     verdict: str,
     reason: str,
+    color: bool = False,
+    command: str | None = None,
+    now: datetime | None = None,
 ) -> str:
+    now = now or datetime.now(timezone.utc)
+    today = now.date()
+    command = command or reconstruct_command(None)
+    utc_stamp = now.strftime("%Y-%m-%d %H:%M") + "Z"
     lines: list[str] = []
-    lines.append("Account billing review")
-    lines.append("=" * 22)
-    lines.append(f"Master profile : {master_profile} (account {master_account_id})")
-    lines.append(f"Target profile : {target_profile} (account {target_account_id})")
-    lines.append(f"CloudWatch region: {region}")
+
+    title = "Account billing review"
+    lines.append(title)
+    lines.append("=" * len(title))
+    lines.extend(
+        aligned_fields(
+            [
+                ("Master profile", f"{master_profile} (account {master_account_id})"),
+                ("Target profile", f"{target_profile} (account {target_account_id})"),
+                ("CloudWatch region", f"{region}   UTC: {utc_stamp}"),
+                ("Command", command),
+            ]
+        )
+    )
     lines.append("")
 
-    lines.append("CloudWatch billing alarms (master, for target account)")
+    lines.extend(format_verdict_banner(verdict, reason, color))
+
+    worst = worst_budget_usage(budgets, mtd)
+    summary_pairs: list[tuple[str, str]] = []
+    if months or worst is not None:
+        summary_pairs.append((f"MTD ({mtd_span_label(today)})", money_display(mtd)))
+        if months:
+            last = months[-1]
+            summary_pairs.append(
+                ("Last complete month", f"{money_display(last.amount)} ({month_abbr(last.month)})")
+            )
+        if worst is not None:
+            summary_pairs.append(
+                ("Worst budget usage", f"{worst[0] * 100:.0f}% ({worst[1]})")
+            )
+        lines.append("Summary")
+        lines.extend(aligned_fields(summary_pairs, indent="  "))
+    lines.append("")
+
+    alarm_title = "CloudWatch billing alarms (master, for target account)"
+    lines.extend(section_header(alarm_title))
     if not alarms:
-        lines.append("  (none found)")
+        lines.append("(none found)")
     else:
-        t = PrettyTable()
-        t.field_names = ["Name", "Severity", "State", "Threshold", "Currency", "ServiceName"]
-        t.align = "l"
-        for a in alarms:
-            t.add_row(
+        t = make_table(
+            ["Name", "Severity", "State", "Threshold", "Currency", "ServiceName"],
+            [
                 [
                     a.name,
                     a.severity,
@@ -438,28 +679,30 @@ def render_report(
                     a.currency or "n/a",
                     a.service_name or "n/a",
                 ]
-            )
+                for a in alarms
+            ],
+            {"Threshold"},
+        )
         lines.append(str(t))
     lines.append("")
 
-    lines.append("Budgets (master, for target account)")
+    budget_title = "Budgets (master, for target account)"
+    lines.extend(section_header(budget_title))
     if not budgets:
-        lines.append("  (none found)")
+        lines.append("(none found)")
     else:
-        t = PrettyTable()
-        t.field_names = [
-            "Name",
-            "Limit",
-            "Unit",
-            "TimeUnit",
-            "Type",
-            "Actual",
-            "Forecast",
-            "MTD%Limit",
-        ]
-        t.align = "l"
+        rows: list[list[str]] = []
+        normalized_names: dict[str, list[str]] = defaultdict(list)
         for b in budgets:
-            t.add_row(
+            monthly, was_normalized, tu = monthly_limit_of(b)
+            mtd_cell = pct(mtd, monthly)
+            if was_normalized:
+                if mtd_cell != "n/a":
+                    mtd_cell += "*"
+                if tu:
+                    normalized_names[tu.upper()].append(b.name)
+            status = budget_status(b, mtd)
+            rows.append(
                 [
                     b.name,
                     fmt_money(b.limit),
@@ -468,45 +711,61 @@ def render_report(
                     b.budget_type or "n/a",
                     fmt_money(b.actual),
                     fmt_money(b.forecast),
-                    pct(mtd, b.limit),
+                    mtd_cell,
+                    format_status_cell(status, color),
                 ]
             )
+        t = make_table(
+            [
+                "Name",
+                "Limit",
+                "Unit",
+                "TimeUnit",
+                "Type",
+                "Actual",
+                "Forecast",
+                "MTD%Limit",
+                "Status",
+            ],
+            rows,
+            {"Limit", "Actual", "Forecast", "MTD%Limit"},
+        )
         lines.append(str(t))
+        for tu, names in normalized_names.items():
+            lines.append(
+                f"* limit normalized from {tu} to monthly: {', '.join(names)}"
+            )
     lines.append("")
 
-    lines.append(f"Spend (Cost Explorer UnblendedCost, target account)")
-    lines.append(f"MTD (1st of month through today): {fmt_money(mtd)}")
-    last1 = sum_last_n(months, 1)
-    last3 = sum_last_n(months, min(3, len(months))) if months else None
-    last6 = sum_last_n(months, min(6, len(months))) if months else None
-    lines.append(
-        f"Sums of complete months: last1={fmt_money(last1)} "
-        f"last3={fmt_money(last3)} last{min(months_requested, max(len(months), 1))}="
-        f"{fmt_money(sum_last_n(months, months_requested) if months else None)}"
-    )
+    spend_title = "Spend (Cost Explorer UnblendedCost, target)"
+    spend_line = f"{spend_title}   MTD: {money_display(mtd)}"
+    lines.append(spend_line)
+    lines.append("-" * len(spend_title))
+    sums_line = format_sums_line(months, months_requested)
+    if sums_line:
+        lines.append(sums_line)
     if not months:
-        lines.append("  (no complete-month CE data)")
+        lines.append("(no complete-month CE data)")
     else:
-        t = PrettyTable()
-        t.field_names = ["Month", "UnblendedCost"]
-        t.align = "l"
-        for m in months:
-            t.add_row([m.month, fmt_money(m.amount)])
-        # Also show last6 sum row for clarity when requested window differs
-        if last6 is not None and months_requested >= 6:
-            t.add_row([f"(sum last {min(6, len(months))})", fmt_money(last6)])
+        t = make_table(
+            ["Month", "UnblendedCost"],
+            [[m.month, fmt_money(m.amount)] for m in months],
+            {"UnblendedCost"},
+        )
         lines.append(str(t))
     lines.append("")
 
-    lines.append(f"Verdict: {verdict}")
-    lines.append(f"Reason : {reason}")
+    verdict_color = VERDICT_STYLE.get(verdict, ("?", "[?]", ANSI_YELLOW))[2]
+    lines.append(f"Verdict: {paint(verdict, verdict_color, color)}")
+    lines.extend(wrap_prefixed("Reason : ", reason, hang=3))
     if budgets:
         smallest = min((b.limit for b in budgets if b.limit is not None), default=None)
         if smallest is not None:
-            lines.append(
-                f"Note   : MTD is {pct(mtd, smallest)} of smallest matched budget limit "
+            note = (
+                f"MTD is {pct(mtd, smallest)} of smallest matched budget limit "
                 f"({fmt_money(smallest)})"
             )
+            lines.extend(wrap_prefixed("Note   : ", note, hang=len("Note   : ")))
     lines.append("")
     return "\n".join(lines)
 
@@ -515,7 +774,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = parse_args(argv)
     except SystemExit as e:
-        return int(e.code) if isinstance(e.code, int) else 1
+        if e.code in (0, None):
+            return 0
+        return 1
 
     region = resolve_region(args.region)
     if region != BILLING_REGION:
@@ -581,9 +842,13 @@ def main(argv: list[str] | None = None) -> int:
         months_requested=args.months,
         verdict=verdict,
         reason=reason,
+        color=color_enabled(args.color),
+        command=reconstruct_command(argv),
     )
     log("Done.")
     sys.stdout.write(report)
+    if args.exit_abnormal and verdict == "ABNORMAL":
+        return 3
     return 0
 
 

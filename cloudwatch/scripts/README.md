@@ -109,6 +109,8 @@ Implemented as a uv inline script with `boto3` and [prettytable](https://pypi.or
 | `--region` | `-r` | env / `us-east-1` | CloudWatch region |
 | `--months` | | `6` | Complete months of CE history |
 | `--budget-name` | | — | Substring filter on budget name |
+| `--color` | | `auto` | ANSI color: `auto` (TTY only), `always`, or `never` |
+| `--exit-abnormal` | | off | Exit `3` when verdict is `ABNORMAL` |
 | `--help` | `-h` | | Show help |
 
 Profiles only select accounts; alarms, budgets, and spend are **discovered** for the target account id from STS.
@@ -130,3 +132,4 @@ MTD vs budget limit is shown for information; it does not alone force ABNORMAL.
 | 0 | Completed |
 | 1 | Usage error |
 | 2 | AWS error |
+| 3 | `--exit-abnormal`: ABNORMAL |
