@@ -104,6 +104,8 @@ Implemented as a uv inline script with `boto3`.
 
 CloudWatch billing metrics, Budgets, and Cost Explorer calls always use **`us-east-1`** (no `--region`).
 
+On a TTY, a one-line spinner runs on stderr while AWS calls are in flight, then disappears. The report is the only stdout. Piped/non-TTY runs stay silent until the report or an error.
+
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `--profile` | `-p` | required | Hub (payer) profile |

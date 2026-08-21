@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from statistics import median
@@ -30,13 +31,53 @@ BILLING_REGION = "us-east-1"
 ACCOUNT_ID_RE = re.compile(r"(?<!\d)(\d{12})(?!\d)")
 
 
-def log(msg: str) -> None:
-    print(f"-> {msg}", file=sys.stderr)
-
-
 def die(msg: str, code: int) -> None:
     print(f"Error: {msg}", file=sys.stderr)
     raise SystemExit(code)
+
+
+class Spinner:
+    """One-line stderr spinner. TTY only; no-op when piped."""
+
+    FRAMES = ("|", "/", "-", "\\")
+
+    def __init__(self) -> None:
+        self.enabled = sys.stderr.isatty()
+        self._msg = ""
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def start(self, msg: str) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            self._msg = msg
+            if self._thread is None or not self._thread.is_alive():
+                self._stop.clear()
+                self._thread = threading.Thread(target=self._run, daemon=True)
+                self._thread.start()
+
+    def _run(self) -> None:
+        i = 0
+        while True:
+            with self._lock:
+                msg = self._msg
+            frame = self.FRAMES[i % len(self.FRAMES)]
+            sys.stderr.write(f"\r\033[2K {frame} {msg}")
+            sys.stderr.flush()
+            i += 1
+            if self._stop.wait(0.08):
+                break
+
+    def stop(self) -> None:
+        if not self.enabled or self._thread is None:
+            return
+        self._stop.set()
+        self._thread.join(timeout=0.5)
+        self._thread = None
+        sys.stderr.write("\r\033[2K")
+        sys.stderr.flush()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -323,7 +364,6 @@ class MonthSpend:
 
 def fetch_monthly_spend(ce: Any, months: int) -> list[MonthSpend]:
     start, end = complete_months_window(months)
-    log(f"CE monthly window: {start} -> {end} (exclusive end)")
     results = get_cost_and_usage(ce, start=start, end=end, granularity="MONTHLY")
     rows: list[MonthSpend] = []
     for item in results:
@@ -342,7 +382,6 @@ def fetch_mtd_spend(ce: Any, today: date | None = None) -> float:
     today = today or datetime.now(timezone.utc).date()
     start = month_start(today)
     end = today + timedelta(days=1)
-    log(f"CE MTD window: {start} -> {end} (exclusive end)")
     results = get_cost_and_usage(ce, start=start, end=end, granularity="DAILY")
     return sum(parse_unblended(item) for item in results)
 
@@ -691,66 +730,68 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         return 1
 
+    spinner = Spinner()
     try:
-        hub_session = make_session(args.profile)
-        target_session = make_session(args.target_profile)
-        hub_id = caller_identity(hub_session)
-        target_id = caller_identity(target_session)
-    except (ClientError, BotoCoreError) as e:
-        die(f"AWS error resolving identities: {e}", 2)
+        spinner.start("resolving profiles")
+        try:
+            hub_session = make_session(args.profile)
+            target_session = make_session(args.target_profile)
+            hub_id = caller_identity(hub_session)
+            target_id = caller_identity(target_session)
+        except (ClientError, BotoCoreError) as e:
+            spinner.stop()
+            die(f"AWS error resolving identities: {e}", 2)
 
-    if hub_id["account_id"] == target_id["account_id"]:
-        die(
-            "Hub and target profiles resolve to the same account "
-            f"({hub_id['account_id']}); pass a member --target-profile",
-            1,
+        if hub_id["account_id"] == target_id["account_id"]:
+            spinner.stop()
+            die(
+                "Hub and target profiles resolve to the same account "
+                f"({hub_id['account_id']}); pass a member --target-profile",
+                1,
+            )
+
+        try:
+            cw = hub_session.client("cloudwatch", region_name=BILLING_REGION)
+            budgets_client = hub_session.client("budgets", region_name=BILLING_REGION)
+            ce = target_session.client("ce", region_name=BILLING_REGION)
+
+            spinner.start("CloudWatch alarms")
+            alarms = collect_target_alarms(cw, target_id["account_id"])
+
+            spinner.start("Budgets")
+            budgets = collect_target_budgets(
+                budgets_client,
+                hub_id["account_id"],
+                target_id["account_id"],
+                args.budget_name,
+            )
+
+            spinner.start("Cost Explorer")
+            months = fetch_monthly_spend(ce, args.months)
+            mtd = fetch_mtd_spend(ce)
+        except (ClientError, BotoCoreError) as e:
+            spinner.stop()
+            die(f"AWS error during review: {e}", 2)
+
+        verdict = classify_spend(months)
+        report = render_report(
+            hub_profile=args.profile,
+            hub_account_id=hub_id["account_id"],
+            target_profile=args.target_profile,
+            target_account_id=target_id["account_id"],
+            alarms=alarms,
+            budgets=budgets,
+            months=months,
+            mtd=mtd,
+            months_requested=args.months,
+            verdict=verdict,
+            color=color_enabled(args.color),
         )
-
-    log(f"Hub: {args.profile} / {hub_id['account_id']}")
-    log(f"Target: {args.target_profile} / {target_id['account_id']}")
-
-    try:
-        cw = hub_session.client("cloudwatch", region_name=BILLING_REGION)
-        budgets_client = hub_session.client("budgets", region_name=BILLING_REGION)
-        ce = target_session.client("ce", region_name=BILLING_REGION)
-
-        log("Fetching CloudWatch billing alarms from hub...")
-        alarms = collect_target_alarms(cw, target_id["account_id"])
-        log(f"Matched alarms: {len(alarms)}")
-
-        log("Fetching Budgets from hub...")
-        budgets = collect_target_budgets(
-            budgets_client,
-            hub_id["account_id"],
-            target_id["account_id"],
-            args.budget_name,
-        )
-        log(f"Matched budgets: {len(budgets)}")
-
-        log("Fetching Cost Explorer spend from target...")
-        months = fetch_monthly_spend(ce, args.months)
-        mtd = fetch_mtd_spend(ce)
-        log(f"Complete months: {len(months)}; MTD={mtd:.2f}")
-    except (ClientError, BotoCoreError) as e:
-        die(f"AWS error during review: {e}", 2)
-
-    verdict = classify_spend(months)
-    report = render_report(
-        hub_profile=args.profile,
-        hub_account_id=hub_id["account_id"],
-        target_profile=args.target_profile,
-        target_account_id=target_id["account_id"],
-        alarms=alarms,
-        budgets=budgets,
-        months=months,
-        mtd=mtd,
-        months_requested=args.months,
-        verdict=verdict,
-        color=color_enabled(args.color),
-    )
-    log("Done.")
-    sys.stdout.write(report)
-    return 0
+        spinner.stop()
+        sys.stdout.write(report)
+        return 0
+    finally:
+        spinner.stop()
 
 
 if __name__ == "__main__":
