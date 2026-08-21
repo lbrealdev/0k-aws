@@ -157,6 +157,24 @@ def caller_identity(session: Any) -> dict[str, str]:
     return {"account_id": ident["Account"], "arn": ident.get("Arn") or ""}
 
 
+def account_alias(session: Any) -> str | None:
+    iam = session.client("iam")
+    try:
+        aliases = iam.list_account_aliases().get("AccountAliases") or []
+    except (ClientError, BotoCoreError):
+        return None
+    alias = aliases[0] if aliases else None
+    if not alias or alias == "None":
+        return None
+    return alias
+
+
+def account_label(alias: str | None, account_id: str) -> str:
+    if alias:
+        return f"{alias} ({account_id})"
+    return account_id
+
+
 def dimensions_map(alarm: dict[str, Any]) -> dict[str, str]:
     return {d["Name"]: d["Value"] for d in alarm.get("Dimensions") or [] if "Name" in d and "Value" in d}
 
@@ -686,10 +704,8 @@ def render_spend(months: list[MonthSpend], color: bool) -> list[str]:
 
 def render_report(
     *,
-    hub_profile: str,
-    hub_account_id: str,
-    target_profile: str,
-    target_account_id: str,
+    hub_display: str,
+    account_display: str,
     alarms: list[AlarmRow],
     budgets: list[BudgetRow],
     months: list[MonthSpend],
@@ -710,8 +726,8 @@ def render_report(
     lines.extend(
         aligned_fields(
             [
-                ("Hub", f"{hub_profile} ({hub_account_id})"),
-                ("Account", f"{target_profile} ({target_account_id})"),
+                ("Hub", hub_display),
+                ("Account", account_display),
                 ("Region", BILLING_REGION),
                 ("When", utc_stamp),
             ]
@@ -757,12 +773,14 @@ def main(argv: list[str] | None = None) -> int:
 
     spinner = Spinner()
     try:
-        spinner.start("resolving profiles")
+        spinner.start("resolving accounts")
         try:
             hub_session = make_session(args.hub)
             target_session = make_session(args.account)
             hub_id = caller_identity(hub_session)
             target_id = caller_identity(target_session)
+            hub_alias = account_alias(hub_session)
+            target_alias = account_alias(target_session)
         except (ClientError, BotoCoreError) as e:
             spinner.stop()
             die(f"AWS error resolving identities: {e}", 2)
@@ -800,10 +818,8 @@ def main(argv: list[str] | None = None) -> int:
 
         verdict = classify_spend(months)
         report = render_report(
-            hub_profile=args.hub,
-            hub_account_id=hub_id["account_id"],
-            target_profile=args.account,
-            target_account_id=target_id["account_id"],
+            hub_display=account_label(hub_alias, hub_id["account_id"]),
+            account_display=account_label(target_alias, target_id["account_id"]),
             alarms=alarms,
             budgets=budgets,
             months=months,

@@ -92,8 +92,8 @@ Implemented as a uv inline script with `boto3`.
 - [`uv`](https://docs.astral.sh/uv/)
 - SSO login for hub and member profiles (`aws sso login --profile …`)
 - IAM:
-  - Hub: `sts:GetCallerIdentity`, `cloudwatch:DescribeAlarms`, `budgets:ViewBudget` / `DescribeBudgets`
-  - Account: `sts:GetCallerIdentity`, `ce:GetCostAndUsage`
+  - Hub: `sts:GetCallerIdentity`, `iam:ListAccountAliases`, `cloudwatch:DescribeAlarms`, `budgets:ViewBudget` / `DescribeBudgets`
+  - Account: `sts:GetCallerIdentity`, `iam:ListAccountAliases`, `ce:GetCostAndUsage`
 
 ### Usage
 
@@ -117,7 +117,7 @@ On a TTY, a one-line spinner runs on stderr while AWS calls are in flight, then 
 | `--color` | | `auto` | ANSI color: `auto` (TTY only), `always`, or `never` |
 | `--help` | `-h` | | Show help |
 
-Profiles only select accounts; alarms, budgets, and spend are **discovered** for the member account id from STS.
+Profiles only select accounts; alarms, budgets, and spend are **discovered** for the member account id from STS. The report header shows each account's **IAM alias** and account id (not the local SSO profile name). If an alias is missing, only the account id is shown.
 
 ### Verdict (v1)
 
