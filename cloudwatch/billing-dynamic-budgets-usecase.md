@@ -112,7 +112,7 @@ A useful read-only analyzer for this pattern should eventually:
 
 The existing helper [`scripts/analyze-billing-alarms.py`](./scripts/analyze-billing-alarms.py) focuses on CloudWatch inventory/assess plus Budget **read** as a secondary signal. It does not yet decode the monthly Lambda formula or prove whether CloudWatch thresholds are also automated.
 
-For a single member account, [`scripts/review-account-billing.py`](./scripts/review-account-billing.py) pulls master CloudWatch + Budgets and target Cost Explorer spend (1/3/6 months + MTD) into a short plain-text NORMAL/ABNORMAL review.
+For a single member account, [`scripts/review-account-billing.py`](./scripts/review-account-billing.py) pulls hub CloudWatch + Budgets and target Cost Explorer spend (1/3/6 months + MTD) into a short plain-text NORMAL/ABNORMAL review.
 
 ## Related
 

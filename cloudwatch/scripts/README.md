@@ -78,39 +78,39 @@ Reports use **live AWS values only** (no hard-coded example dollar amounts).
 
 Read-only **per-account** review using **two SSO profiles**:
 
-1. **Master (`-p`)** — CloudWatch billing alarms + Budgets for the target account  
+1. **Hub (`-p`)** — payer account: CloudWatch billing alarms + Budgets for the target  
 2. **Target (`-t`)** — Cost Explorer UnblendedCost for last 1/3/6 complete months + MTD (1st → today)
 
-Prints a **plain-text** report on stdout (PrettyTable for tabular sections) with verdict `NORMAL` / `ABNORMAL` / `INSUFFICIENT_DATA`. No `-f` / markdown / `-o` in v1.
+Prints a **plain-text** report on stdout with verdict `NORMAL` / `ABNORMAL` / `INSUFFICIENT_DATA`. No `-f` / markdown / `-o` in v1.
 
-Implemented as a uv inline script with `boto3` and [prettytable](https://pypi.org/project/prettytable/).
+Implemented as a uv inline script with `boto3`.
 
 ### Prerequisites
 
 - [`uv`](https://docs.astral.sh/uv/)
-- SSO login for master and target profiles
+- SSO login for hub and target profiles
 - IAM:
-  - Master: `sts:GetCallerIdentity`, `cloudwatch:DescribeAlarms`, `budgets:ViewBudget` / `DescribeBudgets`
+  - Hub: `sts:GetCallerIdentity`, `cloudwatch:DescribeAlarms`, `budgets:ViewBudget` / `DescribeBudgets`
   - Target: `sts:GetCallerIdentity`, `ce:GetCostAndUsage`
 
 ### Usage
 
 ```bash
-./cloudwatch/scripts/review-account-billing.py -p master -t project-a -r us-east-1
+./cloudwatch/scripts/review-account-billing.py -p hub -t project-a
 
 # Optional: focus budgets whose name contains a substring
-./cloudwatch/scripts/review-account-billing.py -p master -t project-a --budget-name Breached
+./cloudwatch/scripts/review-account-billing.py -p hub -t project-a --budget-name Breached
 ```
+
+CloudWatch billing metrics, Budgets, and Cost Explorer calls always use **`us-east-1`** (no `--region`).
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--profile` | `-p` | required | Master (payer) profile |
+| `--profile` | `-p` | required | Hub (payer) profile |
 | `--target-profile` | `-t` | required | Target member profile |
-| `--region` | `-r` | env / `us-east-1` | CloudWatch region |
 | `--months` | | `6` | Complete months of CE history |
 | `--budget-name` | | — | Substring filter on budget name |
 | `--color` | | `auto` | ANSI color: `auto` (TTY only), `always`, or `never` |
-| `--exit-abnormal` | | off | Exit `3` when verdict is `ABNORMAL` |
 | `--help` | `-h` | | Show help |
 
 Profiles only select accounts; alarms, budgets, and spend are **discovered** for the target account id from STS.
@@ -132,4 +132,3 @@ MTD vs budget limit is shown for information; it does not alone force ABNORMAL.
 | 0 | Completed |
 | 1 | Usage error |
 | 2 | AWS error |
-| 3 | `--exit-abnormal`: ABNORMAL |

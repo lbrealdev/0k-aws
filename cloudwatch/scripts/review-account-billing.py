@@ -3,25 +3,20 @@
 # requires-python = ">=3.11"
 # dependencies = [
 #   "boto3>=1.34",
-#   "prettytable>=3.10",
 # ]
 # ///
-"""Review one member account: master CloudWatch/Budgets + target Cost Explorer spend.
+"""Review one member account: hub CloudWatch/Budgets + target Cost Explorer spend.
 
-Plain-text stdout report with PrettyTable sections and NORMAL/ABNORMAL verdict.
+Plain-text stdout report with NORMAL/ABNORMAL/INSUFFICIENT_DATA verdict.
 
-Exit codes: 0 completed, 1 usage, 2 AWS error, 3 ABNORMAL (only with --exit-abnormal).
+Exit codes: 0 completed, 1 usage, 2 AWS error.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import re
-import shlex
 import sys
-import textwrap
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from statistics import median
@@ -29,11 +24,9 @@ from typing import Any
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
-from prettytable import PrettyTable
 
 SCRIPT_NAME = "review-account-billing.py"
 BILLING_REGION = "us-east-1"
-CE_REGION = "us-east-1"
 ACCOUNT_ID_RE = re.compile(r"(?<!\d)(\d{12})(?!\d)")
 
 
@@ -46,29 +39,27 @@ def die(msg: str, code: int) -> None:
     raise SystemExit(code)
 
 
-def resolve_region(cli_region: str | None) -> str:
-    if cli_region:
-        return cli_region
-    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or BILLING_REGION
-
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog=SCRIPT_NAME,
         description=(
-            "Review one member account: CloudWatch alarms + Budgets from the master "
+            "Review one member account: CloudWatch alarms + Budgets from the hub "
             "(payer) profile, and Cost Explorer spend from the target profile. "
-            "Prints a plain-text NORMAL/ABNORMAL report."
+            "Billing APIs always use us-east-1. Prints a plain-text NORMAL/ABNORMAL report."
         ),
     )
-    p.add_argument("-p", "--profile", required=True, help="Master (payer) SSO/CLI profile")
+    p.add_argument(
+        "-p",
+        "--profile",
+        required=True,
+        help="Hub (payer) SSO/CLI profile: Budgets + CloudWatch billing alarms",
+    )
     p.add_argument(
         "-t",
         "--target-profile",
         required=True,
         help="Target member account SSO/CLI profile",
     )
-    p.add_argument("-r", "--region", default=None, help="Region for CloudWatch (default us-east-1)")
     p.add_argument(
         "--months",
         type=int,
@@ -86,19 +77,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="auto",
         help="ANSI color: auto (TTY only), always, or never (default auto)",
     )
-    p.add_argument(
-        "--exit-abnormal",
-        action="store_true",
-        help="Exit with code 3 when the verdict is ABNORMAL",
-    )
     args = p.parse_args(argv)
     if args.months < 1:
         die("--months must be >= 1", 1)
     return args
 
 
-def make_session(profile: str, region: str) -> Any:
-    return boto3.Session(profile_name=profile, region_name=region)
+def make_session(profile: str) -> Any:
+    return boto3.Session(profile_name=profile, region_name=BILLING_REGION)
 
 
 def caller_identity(session: Any) -> dict[str, str]:
@@ -243,12 +229,12 @@ class BudgetRow:
 
 def collect_target_budgets(
     budgets_client: Any,
-    master_account_id: str,
+    hub_account_id: str,
     target_account_id: str,
     budget_name_substr: str | None,
 ) -> list[BudgetRow]:
     rows: list[BudgetRow] = []
-    for budget in iter_budgets(budgets_client, master_account_id):
+    for budget in iter_budgets(budgets_client, hub_account_id):
         if target_account_id not in budget_linked_accounts(budget):
             continue
         name = budget.get("BudgetName") or ""
@@ -283,7 +269,7 @@ def add_months(d: date, months: int) -> date:
 def complete_months_window(n: int, today: date | None = None) -> tuple[date, date]:
     """Return [start, end) covering the last n complete calendar months."""
     today = today or datetime.now(timezone.utc).date()
-    end = month_start(today)  # first day of current month
+    end = month_start(today)
     start = add_months(end, -n)
     return start, end
 
@@ -345,8 +331,6 @@ def fetch_monthly_spend(ce: Any, months: int) -> list[MonthSpend]:
         start_s = period.get("Start") or ""
         month_key = start_s[:7] if len(start_s) >= 7 else start_s
         amount = parse_unblended(item)
-        # Skip empty Estimated months with zero and no data flag if desired;
-        # keep zeros that represent real zero spend.
         if item.get("Estimated") and amount == 0.0:
             continue
         rows.append(MonthSpend(month=month_key, amount=amount))
@@ -357,66 +341,68 @@ def fetch_monthly_spend(ce: Any, months: int) -> list[MonthSpend]:
 def fetch_mtd_spend(ce: Any, today: date | None = None) -> float:
     today = today or datetime.now(timezone.utc).date()
     start = month_start(today)
-    # CE End is exclusive; use tomorrow so today is included.
     end = today + timedelta(days=1)
     log(f"CE MTD window: {start} -> {end} (exclusive end)")
     results = get_cost_and_usage(ce, start=start, end=end, granularity="DAILY")
     return sum(parse_unblended(item) for item in results)
 
 
-def sum_last_n(months: list[MonthSpend], n: int) -> float | None:
-    if not months:
-        return None
-    slice_ = months[-n:] if len(months) >= n else months
-    if not slice_:
-        return None
-    return sum(m.amount for m in slice_)
-
-
-def classify_spend(months: list[MonthSpend]) -> tuple[str, str]:
-    """Return (verdict, reason) using 0.5x-1.5x median band."""
-    amounts = [m.amount for m in months if m.amount is not None]
+def spend_median(months: list[MonthSpend]) -> float | None:
+    amounts = [m.amount for m in months]
     if len(amounts) < 2:
-        return "INSUFFICIENT_DATA", "Fewer than 2 complete months of Cost Explorer data"
+        return None
+    return median(amounts)
 
-    med = median(amounts)
+
+def band_outliers(months: list[MonthSpend], med: float) -> tuple[list[MonthSpend], list[MonthSpend]]:
     if med <= 0:
-        if any(a > 0 for a in amounts):
-            return "ABNORMAL", "Median monthly spend is 0 but some months have spend > 0"
-        return "NORMAL", "All complete months are 0 (or negligible)"
-
+        return [], []
     high = [m for m in months if m.amount > 1.5 * med]
     low = [m for m in months if m.amount < 0.5 * med]
-    if high or low:
-        parts: list[str] = []
-        if high:
-            parts.append(
-                "high: " + ", ".join(f"{m.month}={m.amount:.2f}" for m in high) + f" (>1.5x median {med:.2f})"
-            )
-        if low:
-            parts.append(
-                "low: " + ", ".join(f"{m.month}={m.amount:.2f}" for m in low) + f" (<0.5x median {med:.2f})"
-            )
-        return "ABNORMAL", "; ".join(parts)
+    return high, low
 
-    return "NORMAL", f"All months within 0.5x-1.5x of median {med:.2f}"
+
+def classify_spend(months: list[MonthSpend]) -> str:
+    """Verdict using 0.5x-1.5x median band on complete months."""
+    med = spend_median(months)
+    if med is None:
+        return "INSUFFICIENT_DATA"
+    if med <= 0:
+        if any(m.amount > 0 for m in months):
+            return "ABNORMAL"
+        return "NORMAL"
+    high, low = band_outliers(months, med)
+    if high or low:
+        return "ABNORMAL"
+    return "NORMAL"
 
 
 ANSI_RESET = "\033[0m"
 ANSI_GREEN = "\033[32m"
 ANSI_RED = "\033[31m"
 ANSI_YELLOW = "\033[33m"
-ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
-VERDICT_STYLE = {
-    "NORMAL": ("✓", "[OK]", ANSI_GREEN),
-    "ABNORMAL": ("✗", "[ALERT]", ANSI_RED),
-    "INSUFFICIENT_DATA": ("?", "[NO DATA]", ANSI_YELLOW),
+VERDICT_COLOR = {
+    "NORMAL": ANSI_GREEN,
+    "ABNORMAL": ANSI_RED,
+    "INSUFFICIENT_DATA": ANSI_YELLOW,
 }
 STATUS_COLOR = {
     "OK": ANSI_GREEN,
     "WATCH": ANSI_YELLOW,
     "BREACH": ANSI_RED,
+}
+STATE_COLOR = {
+    "OK": ANSI_GREEN,
+    "ALARM": ANSI_RED,
+    "NODATA": ANSI_YELLOW,
+}
+FLAG_COLOR = {
+    "HIGH": ANSI_RED,
+    "LOW": ANSI_YELLOW,
+}
+ALARM_STATE_LABEL = {
+    "INSUFFICIENT_DATA": "NODATA",
 }
 
 
@@ -428,42 +414,16 @@ def color_enabled(mode: str) -> bool:
     return sys.stdout.isatty()
 
 
-def reconstruct_command(argv: list[str] | None) -> str:
-    if argv is None:
-        parts = list(sys.argv)
-    else:
-        parts = list(argv)
-    if not parts:
-        parts = [SCRIPT_NAME]
-    else:
-        base = os.path.basename(parts[0])
-        if "review-account-billing" in base:
-            parts = [SCRIPT_NAME, *parts[1:]]
-        else:
-            parts = [SCRIPT_NAME, *parts]
-    return " ".join(shlex.quote(p) for p in parts)
-
-
-def paint(text: str, color: str, enabled: bool) -> str:
-    if not enabled:
+def paint(text: str, color: str | None, enabled: bool) -> str:
+    if not enabled or not color:
         return text
     return f"{color}{text}{ANSI_RESET}"
-
-
-def visible_len(s: str) -> int:
-    return len(ANSI_RE.sub("", s))
 
 
 def fmt_money(v: float | None) -> str:
     if v is None:
         return "n/a"
     return f"{v:,.2f}"
-
-
-def pct(part: float | None, whole: float | None) -> str:
-    if part is None or whole is None or whole <= 0:
-        return "n/a"
-    return f"{(part / whole) * 100:.1f}%"
 
 
 def money_display(v: float | None) -> str:
@@ -479,22 +439,6 @@ def aligned_fields(pairs: list[tuple[str, str]], indent: str = "") -> list[str]:
     return [f"{indent}{k.ljust(width)}: {v}" for k, v in pairs]
 
 
-def section_header(title: str, underline: str = "-") -> list[str]:
-    return [title, underline * len(title)]
-
-
-def wrap_prefixed(prefix: str, text: str, *, hang: int, width: int = 78) -> list[str]:
-    wrapper = textwrap.TextWrapper(
-        width=width,
-        initial_indent=prefix,
-        subsequent_indent=" " * hang,
-        break_long_words=False,
-        break_on_hyphens=False,
-    )
-    wrapped = wrapper.wrap(text)
-    return wrapped or [prefix.rstrip()]
-
-
 def month_abbr(yyyy_mm: str) -> str:
     try:
         return datetime.strptime(yyyy_mm, "%Y-%m").strftime("%b")
@@ -506,15 +450,15 @@ def mtd_span_label(today: date) -> str:
     return f"{today.strftime('%b')} 1-{today.day}"
 
 
-def monthly_limit_of(b: BudgetRow) -> tuple[float | None, bool, str | None]:
+def monthly_limit_of(b: BudgetRow) -> tuple[float | None, str | None]:
     if b.limit is None:
-        return None, False, b.time_unit
+        return None, b.time_unit
     tu = (b.time_unit or "").upper()
     if tu == "QUARTERLY":
-        return b.limit / 3.0, True, b.time_unit
+        return b.limit / 3.0, b.time_unit
     if tu == "ANNUALLY":
-        return b.limit / 12.0, True, b.time_unit
-    return b.limit, False, b.time_unit
+        return b.limit / 12.0, b.time_unit
+    return b.limit, b.time_unit
 
 
 def budget_usage_amount(b: BudgetRow, mtd: float) -> float:
@@ -525,7 +469,7 @@ def budget_usage_amount(b: BudgetRow, mtd: float) -> float:
 
 
 def budget_status(b: BudgetRow, mtd: float) -> str:
-    monthly, _, _ = monthly_limit_of(b)
+    monthly, _ = monthly_limit_of(b)
     if monthly is None or monthly <= 0:
         return "n/a"
     ratio = budget_usage_amount(b, mtd) / monthly
@@ -536,96 +480,165 @@ def budget_status(b: BudgetRow, mtd: float) -> str:
     return "OK"
 
 
-def format_status_cell(status: str, enabled: bool) -> str:
-    color = STATUS_COLOR.get(status)
-    if color is None:
-        return status
-    return paint(status, color, enabled)
-
-
 def complete_month_sum(months: list[MonthSpend], n: int) -> float | None:
     if len(months) < n:
         return None
     return sum(m.amount for m in months[-n:])
 
 
-def format_sums_line(months: list[MonthSpend], months_requested: int) -> str | None:
-    parts: list[str] = []
+def window_sums(months: list[MonthSpend], months_requested: int) -> tuple[str, str] | None:
     windows: list[int] = [1, 3]
     if months_requested not in windows:
         windows.append(months_requested)
+    labels: list[str] = []
+    values: list[str] = []
     for n in windows:
         total = complete_month_sum(months, n)
         if total is None:
             continue
-        parts.append(f"{n}M={money_display(total)}")
-    if not parts:
+        labels.append(f"{n}M")
+        values.append(money_display(total))
+    if not values:
         return None
-    return "Sums: " + "  ".join(parts)
+    return " / ".join(labels), " / ".join(values)
 
 
-def make_table(field_names: list[str], rows: list[list[str]], right: set[str]) -> PrettyTable:
-    t = PrettyTable()
-    t.field_names = field_names
-    t.align = "l"
-    for col in right:
-        if col in field_names:
-            t.align[col] = "r"
-    for row in rows:
-        t.add_row(row)
-    return t
+def month_flag(amount: float, med: float | None) -> str | None:
+    if med is None or med <= 0:
+        return None
+    if amount > 1.5 * med:
+        return "HIGH"
+    if amount < 0.5 * med:
+        return "LOW"
+    return None
 
 
-def format_verdict_banner(verdict: str, reason: str, enabled: bool) -> list[str]:
-    symbol, tag, color = VERDICT_STYLE.get(verdict, ("?", "[?]", ANSI_YELLOW))
-    head = f"VERDICT: {symbol} {tag} {verdict}"
-    painted = paint(head, color, enabled)
-    plain = f"{head}   {reason}"
-    wrapped = textwrap.wrap(
-        plain,
-        width=78,
-        subsequent_indent="   ",
-        break_long_words=False,
-        break_on_hyphens=False,
-    ) or [plain]
-    wrapped[0] = wrapped[0].replace(head, painted, 1)
-    wrapped.append("-" * visible_len(wrapped[0]))
-    return wrapped
+def alarm_state_label(state: str) -> str:
+    return ALARM_STATE_LABEL.get(state, state or "n/a")
 
 
-def worst_budget_usage(budgets: list[BudgetRow], mtd: float) -> tuple[float, str] | None:
-    worst: tuple[float, str] | None = None
+def limit_label(b: BudgetRow) -> str:
+    monthly, tu = monthly_limit_of(b)
+    tu_u = (tu or "").upper()
+    if b.limit is None:
+        return "n/a"
+    shown = money_display(b.limit)
+    if tu_u == "QUARTERLY":
+        return f"{shown}/qtr ({money_display(monthly)}/mo)"
+    if tu_u == "ANNUALLY":
+        return f"{shown}/yr ({money_display(monthly)}/mo)"
+    if tu_u == "MONTHLY" or not tu_u:
+        return f"{shown}/mo"
+    return f"{shown}/{tu_u.lower()}"
+
+
+def verdict_detail_lines(months: list[MonthSpend]) -> list[str]:
+    med = spend_median(months)
+    if med is None:
+        return ["Fewer than 2 complete months of Cost Explorer data"]
+    if med <= 0:
+        if any(m.amount > 0 for m in months):
+            return ["Median monthly spend is 0 but some months have spend > 0"]
+        return ["All complete months are 0 (or negligible)"]
+    high, low = band_outliers(months, med)
+    if not high and not low:
+        return [f"All months within 0.5x-1.5x of median {money_display(med)}"]
+    lines: list[str] = []
+    for m in high:
+        ratio = m.amount / med
+        lines.append(f"{month_abbr(m.month)} {money_display(m.amount)} is {ratio:.1f}x median {money_display(med)}")
+    for m in low:
+        ratio = m.amount / med
+        lines.append(f"{month_abbr(m.month)} {money_display(m.amount)} is {ratio:.1f}x median {money_display(med)}")
+    return lines
+
+
+def render_alarms(alarms: list[AlarmRow], color: bool) -> list[str]:
+    lines = [f"ALARMS ({len(alarms)})  hub -> target"]
+    if not alarms:
+        lines.append("  (none)")
+        return lines
+    for a in alarms:
+        state = alarm_state_label(a.state)
+        bits = [
+            f"{(a.severity or 'n/a'):<4}",
+            paint(f"{state:<6}", STATE_COLOR.get(state), color),
+            f"{money_display(a.threshold):>12}",
+        ]
+        extra = []
+        if a.currency:
+            extra.append(a.currency)
+        if a.service_name:
+            extra.append(a.service_name)
+        meta = f"  {'  '.join(bits)}"
+        if extra:
+            meta += "  " + "  ".join(extra)
+        lines.append(meta)
+        lines.append(f"    {a.name}")
+    return lines
+
+
+def render_budgets(budgets: list[BudgetRow], mtd: float, color: bool) -> list[str]:
+    lines = [f"BUDGETS ({len(budgets)})  hub -> target"]
+    if not budgets:
+        lines.append("  (none)")
+        return lines
     for b in budgets:
-        monthly, _, _ = monthly_limit_of(b)
+        monthly, _ = monthly_limit_of(b)
+        status = budget_status(b, mtd)
         if monthly is None or monthly <= 0:
-            continue
-        ratio = budget_usage_amount(b, mtd) / monthly
-        if worst is None or ratio > worst[0]:
-            worst = (ratio, b.name)
-    return worst
+            used = "used n/a"
+        else:
+            used = f"used {budget_usage_amount(b, mtd) / monthly * 100:.0f}%"
+        lines.append(f"  {b.name}")
+        lines.append(
+            "    "
+            + "  ".join(
+                [
+                    limit_label(b),
+                    f"actual {money_display(b.actual)}",
+                    f"forecast {money_display(b.forecast)}",
+                    used,
+                    paint(status, STATUS_COLOR.get(status), color),
+                ]
+            )
+        )
+    return lines
+
+
+def render_spend(months: list[MonthSpend], color: bool) -> list[str]:
+    lines = ["SPEND  UnblendedCost (target)"]
+    if not months:
+        lines.append("  (no complete-month CE data)")
+        return lines
+    med = spend_median(months)
+    amount_width = max(len(money_display(m.amount)) for m in months)
+    for m in months:
+        flag = month_flag(m.amount, med)
+        row = f"  {m.month}  {money_display(m.amount).rjust(amount_width)}"
+        if flag:
+            row += "  " + paint(flag, FLAG_COLOR.get(flag), color)
+        lines.append(row)
+    return lines
 
 
 def render_report(
     *,
-    master_profile: str,
-    master_account_id: str,
+    hub_profile: str,
+    hub_account_id: str,
     target_profile: str,
     target_account_id: str,
-    region: str,
     alarms: list[AlarmRow],
     budgets: list[BudgetRow],
     months: list[MonthSpend],
     mtd: float,
     months_requested: int,
     verdict: str,
-    reason: str,
     color: bool = False,
-    command: str | None = None,
     now: datetime | None = None,
 ) -> str:
     now = now or datetime.now(timezone.utc)
     today = now.date()
-    command = command or reconstruct_command(None)
     utc_stamp = now.strftime("%Y-%m-%d %H:%M") + "Z"
     lines: list[str] = []
 
@@ -635,137 +648,37 @@ def render_report(
     lines.extend(
         aligned_fields(
             [
-                ("Master profile", f"{master_profile} (account {master_account_id})"),
-                ("Target profile", f"{target_profile} (account {target_account_id})"),
-                ("CloudWatch region", f"{region}   UTC: {utc_stamp}"),
-                ("Command", command),
+                ("Hub", f"{hub_profile} ({hub_account_id})"),
+                ("Target", f"{target_profile} ({target_account_id})"),
+                ("Region", BILLING_REGION),
+                ("When", utc_stamp),
             ]
         )
     )
     lines.append("")
 
-    lines.extend(format_verdict_banner(verdict, reason, color))
-
-    worst = worst_budget_usage(budgets, mtd)
-    summary_pairs: list[tuple[str, str]] = []
-    if months or worst is not None:
-        summary_pairs.append((f"MTD ({mtd_span_label(today)})", money_display(mtd)))
-        if months:
-            last = months[-1]
-            summary_pairs.append(
-                ("Last complete month", f"{money_display(last.amount)} ({month_abbr(last.month)})")
-            )
-        if worst is not None:
-            summary_pairs.append(
-                ("Worst budget usage", f"{worst[0] * 100:.0f}% ({worst[1]})")
-            )
-        lines.append("Summary")
-        lines.extend(aligned_fields(summary_pairs, indent="  "))
+    verdict_color = VERDICT_COLOR.get(verdict, ANSI_YELLOW)
+    lines.append(f"VERDICT  {paint(verdict, verdict_color, color)}")
+    for detail in verdict_detail_lines(months):
+        lines.append(f"  {detail}")
     lines.append("")
 
-    alarm_title = "CloudWatch billing alarms (master, for target account)"
-    lines.extend(section_header(alarm_title))
-    if not alarms:
-        lines.append("(none found)")
-    else:
-        t = make_table(
-            ["Name", "Severity", "State", "Threshold", "Currency", "ServiceName"],
-            [
-                [
-                    a.name,
-                    a.severity,
-                    a.state,
-                    fmt_money(a.threshold),
-                    a.currency or "n/a",
-                    a.service_name or "n/a",
-                ]
-                for a in alarms
-            ],
-            {"Threshold"},
-        )
-        lines.append(str(t))
+    snap: list[tuple[str, str]] = [("MTD", f"{money_display(mtd)}  ({mtd_span_label(today)})")]
+    if months:
+        last = months[-1]
+        snap.append(("Last month", f"{money_display(last.amount)}  ({month_abbr(last.month)})"))
+    sums = window_sums(months, months_requested)
+    if sums:
+        snap.append(sums)
+    lines.append("SNAPSHOT")
+    lines.extend(aligned_fields(snap, indent="  "))
     lines.append("")
 
-    budget_title = "Budgets (master, for target account)"
-    lines.extend(section_header(budget_title))
-    if not budgets:
-        lines.append("(none found)")
-    else:
-        rows: list[list[str]] = []
-        normalized_names: dict[str, list[str]] = defaultdict(list)
-        for b in budgets:
-            monthly, was_normalized, tu = monthly_limit_of(b)
-            mtd_cell = pct(mtd, monthly)
-            if was_normalized:
-                if mtd_cell != "n/a":
-                    mtd_cell += "*"
-                if tu:
-                    normalized_names[tu.upper()].append(b.name)
-            status = budget_status(b, mtd)
-            rows.append(
-                [
-                    b.name,
-                    fmt_money(b.limit),
-                    b.unit or "n/a",
-                    b.time_unit or "n/a",
-                    b.budget_type or "n/a",
-                    fmt_money(b.actual),
-                    fmt_money(b.forecast),
-                    mtd_cell,
-                    format_status_cell(status, color),
-                ]
-            )
-        t = make_table(
-            [
-                "Name",
-                "Limit",
-                "Unit",
-                "TimeUnit",
-                "Type",
-                "Actual",
-                "Forecast",
-                "MTD%Limit",
-                "Status",
-            ],
-            rows,
-            {"Limit", "Actual", "Forecast", "MTD%Limit"},
-        )
-        lines.append(str(t))
-        for tu, names in normalized_names.items():
-            lines.append(
-                f"* limit normalized from {tu} to monthly: {', '.join(names)}"
-            )
+    lines.extend(render_alarms(alarms, color))
     lines.append("")
-
-    spend_title = "Spend (Cost Explorer UnblendedCost, target)"
-    spend_line = f"{spend_title}   MTD: {money_display(mtd)}"
-    lines.append(spend_line)
-    lines.append("-" * len(spend_title))
-    sums_line = format_sums_line(months, months_requested)
-    if sums_line:
-        lines.append(sums_line)
-    if not months:
-        lines.append("(no complete-month CE data)")
-    else:
-        t = make_table(
-            ["Month", "UnblendedCost"],
-            [[m.month, fmt_money(m.amount)] for m in months],
-            {"UnblendedCost"},
-        )
-        lines.append(str(t))
+    lines.extend(render_budgets(budgets, mtd, color))
     lines.append("")
-
-    verdict_color = VERDICT_STYLE.get(verdict, ("?", "[?]", ANSI_YELLOW))[2]
-    lines.append(f"Verdict: {paint(verdict, verdict_color, color)}")
-    lines.extend(wrap_prefixed("Reason : ", reason, hang=3))
-    if budgets:
-        smallest = min((b.limit for b in budgets if b.limit is not None), default=None)
-        if smallest is not None:
-            note = (
-                f"MTD is {pct(mtd, smallest)} of smallest matched budget limit "
-                f"({fmt_money(smallest)})"
-            )
-            lines.extend(wrap_prefixed("Note   : ", note, hang=len("Note   : ")))
+    lines.extend(render_spend(months, color))
     lines.append("")
     return "\n".join(lines)
 
@@ -778,44 +691,37 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         return 1
 
-    region = resolve_region(args.region)
-    if region != BILLING_REGION:
-        log(
-            f"Warning: billing metrics are only published in {BILLING_REGION}; "
-            f"using {region} as requested"
-        )
-
     try:
-        master_session = make_session(args.profile, region)
-        target_session = make_session(args.target_profile, region)
-        master_id = caller_identity(master_session)
+        hub_session = make_session(args.profile)
+        target_session = make_session(args.target_profile)
+        hub_id = caller_identity(hub_session)
         target_id = caller_identity(target_session)
     except (ClientError, BotoCoreError) as e:
         die(f"AWS error resolving identities: {e}", 2)
 
-    if master_id["account_id"] == target_id["account_id"]:
+    if hub_id["account_id"] == target_id["account_id"]:
         die(
-            "Master and target profiles resolve to the same account "
-            f"({master_id['account_id']}); pass a member --target-profile",
+            "Hub and target profiles resolve to the same account "
+            f"({hub_id['account_id']}); pass a member --target-profile",
             1,
         )
 
-    log(f"Master: {args.profile} / {master_id['account_id']}")
+    log(f"Hub: {args.profile} / {hub_id['account_id']}")
     log(f"Target: {args.target_profile} / {target_id['account_id']}")
 
     try:
-        cw = master_session.client("cloudwatch", region_name=region)
-        budgets_client = master_session.client("budgets", region_name=BILLING_REGION)
-        ce = target_session.client("ce", region_name=CE_REGION)
+        cw = hub_session.client("cloudwatch", region_name=BILLING_REGION)
+        budgets_client = hub_session.client("budgets", region_name=BILLING_REGION)
+        ce = target_session.client("ce", region_name=BILLING_REGION)
 
-        log("Fetching CloudWatch billing alarms from master...")
+        log("Fetching CloudWatch billing alarms from hub...")
         alarms = collect_target_alarms(cw, target_id["account_id"])
         log(f"Matched alarms: {len(alarms)}")
 
-        log("Fetching Budgets from master...")
+        log("Fetching Budgets from hub...")
         budgets = collect_target_budgets(
             budgets_client,
-            master_id["account_id"],
+            hub_id["account_id"],
             target_id["account_id"],
             args.budget_name,
         )
@@ -828,27 +734,22 @@ def main(argv: list[str] | None = None) -> int:
     except (ClientError, BotoCoreError) as e:
         die(f"AWS error during review: {e}", 2)
 
-    verdict, reason = classify_spend(months)
+    verdict = classify_spend(months)
     report = render_report(
-        master_profile=args.profile,
-        master_account_id=master_id["account_id"],
+        hub_profile=args.profile,
+        hub_account_id=hub_id["account_id"],
         target_profile=args.target_profile,
         target_account_id=target_id["account_id"],
-        region=region,
         alarms=alarms,
         budgets=budgets,
         months=months,
         mtd=mtd,
         months_requested=args.months,
         verdict=verdict,
-        reason=reason,
         color=color_enabled(args.color),
-        command=reconstruct_command(argv),
     )
     log("Done.")
     sys.stdout.write(report)
-    if args.exit_abnormal and verdict == "ABNORMAL":
-        return 3
     return 0
 
 

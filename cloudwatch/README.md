@@ -15,7 +15,7 @@ Operational guides and read-only helpers for Amazon CloudWatch — especially **
 
   Markdown reports are written with `-o/--output` (UTF-8 file); they are not printed to the terminal. See [`scripts/README.md`](./scripts/README.md).
 
-- [`scripts/review-account-billing.py`](./scripts/review-account-billing.py) — **read-only** per-account review: master CloudWatch + Budgets, target Cost Explorer (1/3/6 months + MTD), plain-text NORMAL/ABNORMAL report (PrettyTable). See [`scripts/README.md`](./scripts/README.md).
+- [`scripts/review-account-billing.py`](./scripts/review-account-billing.py) — **read-only** per-account review: hub CloudWatch + Budgets, target Cost Explorer (1/3/6 months + MTD), plain-text NORMAL/ABNORMAL report. See [`scripts/README.md`](./scripts/README.md).
 
 ## Related
 
