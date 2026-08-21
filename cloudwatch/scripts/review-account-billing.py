@@ -5,7 +5,7 @@
 #   "boto3>=1.34",
 # ]
 # ///
-"""Review one member account: hub CloudWatch/Budgets + target Cost Explorer spend.
+"""Review one member account: hub CloudWatch/Budgets + member Cost Explorer spend.
 
 Plain-text stdout report with NORMAL/ABNORMAL/INSUFFICIENT_DATA verdict.
 
@@ -15,6 +15,7 @@ Exit codes: 0 completed, 1 usage, 2 AWS error.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import threading
@@ -29,6 +30,11 @@ from botocore.exceptions import BotoCoreError, ClientError
 SCRIPT_NAME = "review-account-billing.py"
 BILLING_REGION = "us-east-1"
 ACCOUNT_ID_RE = re.compile(r"(?<!\d)(\d{12})(?!\d)")
+ENV_CREDENTIAL_VARS = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+)
 
 
 def die(msg: str, code: int) -> None:
@@ -83,23 +89,29 @@ class Spinner:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog=SCRIPT_NAME,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "Review one member account: CloudWatch alarms + Budgets from the hub "
-            "(payer) profile, and Cost Explorer spend from the target profile. "
+            "(payer) SSO profile, and Cost Explorer spend from the member SSO profile.\n"
+            "\n"
+            "Auth: named SSO profiles only (--hub and --account). Does not use "
+            "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN, and "
+            "those env vars must be unset (boto3 would let them override the "
+            "profiles). Run `aws sso login` for each profile first.\n"
+            "\n"
             "Billing APIs always use us-east-1. Prints a plain-text NORMAL/ABNORMAL report."
         ),
     )
     p.add_argument(
-        "-p",
-        "--profile",
+        "--hub",
         required=True,
-        help="Hub (payer) SSO/CLI profile: Budgets + CloudWatch billing alarms",
+        help="Hub (payer) SSO profile: Budgets + CloudWatch billing alarms",
     )
     p.add_argument(
-        "-t",
-        "--target-profile",
+        "-a",
+        "--account",
         required=True,
-        help="Target member account SSO/CLI profile",
+        help="Member account SSO profile (linked/target account, not an account id)",
     )
     p.add_argument(
         "--months",
@@ -108,7 +120,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Complete calendar months of CE history (default 6)",
     )
     p.add_argument(
-        "--budget-name",
+        "--budget",
         default=None,
         help="Optional substring filter on budget name after account matching",
     )
@@ -122,6 +134,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.months < 1:
         die("--months must be >= 1", 1)
     return args
+
+
+def reject_env_credentials() -> None:
+    present = [name for name in ENV_CREDENTIAL_VARS if os.environ.get(name)]
+    if present:
+        die(
+            "named SSO profiles only (--hub / --account); unset "
+            + ", ".join(present)
+            + " (env credentials override profiles and cannot select two accounts)",
+            1,
+        )
 
 
 def make_session(profile: str) -> Any:
@@ -688,7 +711,7 @@ def render_report(
         aligned_fields(
             [
                 ("Hub", f"{hub_profile} ({hub_account_id})"),
-                ("Target", f"{target_profile} ({target_account_id})"),
+                ("Account", f"{target_profile} ({target_account_id})"),
                 ("Region", BILLING_REGION),
                 ("When", utc_stamp),
             ]
@@ -730,12 +753,14 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         return 1
 
+    reject_env_credentials()
+
     spinner = Spinner()
     try:
         spinner.start("resolving profiles")
         try:
-            hub_session = make_session(args.profile)
-            target_session = make_session(args.target_profile)
+            hub_session = make_session(args.hub)
+            target_session = make_session(args.account)
             hub_id = caller_identity(hub_session)
             target_id = caller_identity(target_session)
         except (ClientError, BotoCoreError) as e:
@@ -745,8 +770,8 @@ def main(argv: list[str] | None = None) -> int:
         if hub_id["account_id"] == target_id["account_id"]:
             spinner.stop()
             die(
-                "Hub and target profiles resolve to the same account "
-                f"({hub_id['account_id']}); pass a member --target-profile",
+                "Hub and account profiles resolve to the same account "
+                f"({hub_id['account_id']}); pass a member --account",
                 1,
             )
 
@@ -763,7 +788,7 @@ def main(argv: list[str] | None = None) -> int:
                 budgets_client,
                 hub_id["account_id"],
                 target_id["account_id"],
-                args.budget_name,
+                args.budget,
             )
 
             spinner.start("Cost Explorer")
@@ -775,9 +800,9 @@ def main(argv: list[str] | None = None) -> int:
 
         verdict = classify_spend(months)
         report = render_report(
-            hub_profile=args.profile,
+            hub_profile=args.hub,
             hub_account_id=hub_id["account_id"],
-            target_profile=args.target_profile,
+            target_profile=args.account,
             target_account_id=target_id["account_id"],
             alarms=alarms,
             budgets=budgets,

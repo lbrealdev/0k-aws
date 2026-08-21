@@ -76,10 +76,12 @@ Reports use **live AWS values only** (no hard-coded example dollar amounts).
 
 ## `review-account-billing.py`
 
-Read-only **per-account** review using **two SSO profiles**:
+Read-only **per-account** review using **two named SSO profiles** (not env credentials):
 
-1. **Hub (`-p`)** — payer account: CloudWatch billing alarms + Budgets for the target  
-2. **Target (`-t`)** — Cost Explorer UnblendedCost for last 1/3/6 complete months + MTD (1st → today)
+1. **Hub (`--hub`)** — payer account: CloudWatch billing alarms + Budgets for the member  
+2. **Account (`-a` / `--account`)** — Cost Explorer UnblendedCost for last 1/3/6 complete months + MTD (1st → today)
+
+`--hub` and `--account` are SSO profile names, not account ids. The script does **not** use `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`; if those are set it exits with a usage error (boto3 would otherwise let them override the profiles, and env creds cannot select two accounts).
 
 Prints a **plain-text** report on stdout with verdict `NORMAL` / `ABNORMAL` / `INSUFFICIENT_DATA`. No `-f` / markdown / `-o` in v1.
 
@@ -88,18 +90,18 @@ Implemented as a uv inline script with `boto3`.
 ### Prerequisites
 
 - [`uv`](https://docs.astral.sh/uv/)
-- SSO login for hub and target profiles
+- SSO login for hub and member profiles (`aws sso login --profile …`)
 - IAM:
   - Hub: `sts:GetCallerIdentity`, `cloudwatch:DescribeAlarms`, `budgets:ViewBudget` / `DescribeBudgets`
-  - Target: `sts:GetCallerIdentity`, `ce:GetCostAndUsage`
+  - Account: `sts:GetCallerIdentity`, `ce:GetCostAndUsage`
 
 ### Usage
 
 ```bash
-./cloudwatch/scripts/review-account-billing.py -p hub -t project-a
+./cloudwatch/scripts/review-account-billing.py --hub hub --account project-a
 
 # Optional: focus budgets whose name contains a substring
-./cloudwatch/scripts/review-account-billing.py -p hub -t project-a --budget-name Breached
+./cloudwatch/scripts/review-account-billing.py --hub hub --account project-a --budget Breached
 ```
 
 CloudWatch billing metrics, Budgets, and Cost Explorer calls always use **`us-east-1`** (no `--region`).
@@ -108,14 +110,14 @@ On a TTY, a one-line spinner runs on stderr while AWS calls are in flight, then 
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--profile` | `-p` | required | Hub (payer) profile |
-| `--target-profile` | `-t` | required | Target member profile |
+| `--hub` | | required | Hub (payer) SSO profile |
+| `--account` | `-a` | required | Member account SSO profile |
 | `--months` | | `6` | Complete months of CE history |
-| `--budget-name` | | — | Substring filter on budget name |
+| `--budget` | | — | Substring filter on budget name |
 | `--color` | | `auto` | ANSI color: `auto` (TTY only), `always`, or `never` |
 | `--help` | `-h` | | Show help |
 
-Profiles only select accounts; alarms, budgets, and spend are **discovered** for the target account id from STS.
+Profiles only select accounts; alarms, budgets, and spend are **discovered** for the member account id from STS.
 
 ### Verdict (v1)
 
