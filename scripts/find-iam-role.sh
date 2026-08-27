@@ -12,8 +12,10 @@ AWS_ENV_VARS=(AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN)
 QUERY=""
 ROLE_NAME=""
 PROFILES=()
+HITS=()
 FOUND=0
 SCANNED=0
+SKIPPED=0
 
 usage() {
     cat << EOF
@@ -31,7 +33,7 @@ SSO login required per profile. Static env credentials are refused.
 
 STS / AccessDenied on a profile is skipped, not fatal.
 
-Output (TSV): account  profile  RoleName  Arn
+Prints an aligned table (ACCOUNT | PROFILE | ROLE | ARN).
 Exit 0 if at least one match, 1 if none (or no reachable profiles).
 
 Examples:
@@ -44,6 +46,66 @@ EOF
 error() { echo "[ERROR] $*" >&2; }
 warn()  { echo "[WARN]  $*" >&2; }
 info()  { echo "[INFO]  $*" >&2; }
+
+_col_width() {
+    local current="$1"
+    local value="$2"
+    local len=${#value}
+    if [[ "$len" -gt "$current" ]]; then
+        echo "$len"
+    else
+        echo "$current"
+    fi
+}
+
+_dashes() {
+    printf '%*s' "$1" '' | tr ' ' '-'
+}
+
+# Rows are ACCOUNT<TAB>PROFILE<TAB>ROLE<TAB>ARN. Align like aws-sso-check.sh.
+print_table() {
+    local h_account="ACCOUNT"
+    local h_profile="PROFILE"
+    local h_role="ROLE"
+    local h_arn="ARN"
+    local w_account=${#h_account}
+    local w_profile=${#h_profile}
+    local w_role=${#h_role}
+    local w_arn=${#h_arn}
+    local row account profile role arn
+
+    if [[ $# -eq 0 ]]; then
+        info "no matches"
+        return 0
+    fi
+
+    for row in "$@"; do
+        IFS=$'\t' read -r account profile role arn <<< "$row"
+        w_account=$(_col_width "$w_account" "$account")
+        w_profile=$(_col_width "$w_profile" "$profile")
+        w_role=$(_col_width "$w_role" "$role")
+        w_arn=$(_col_width "$w_arn" "$arn")
+    done
+
+    printf "%-*s | %-*s | %-*s | %s\n" \
+        "$w_account" "$h_account" \
+        "$w_profile" "$h_profile" \
+        "$w_role" "$h_role" \
+        "$h_arn"
+    printf "%s-+-%s-+-%s-+-%s\n" \
+        "$(_dashes "$w_account")" \
+        "$(_dashes "$w_profile")" \
+        "$(_dashes "$w_role")" \
+        "$(_dashes "$w_arn")"
+    for row in "$@"; do
+        IFS=$'\t' read -r account profile role arn <<< "$row"
+        printf "%-*s | %-*s | %-*s | %s\n" \
+            "$w_account" "$account" \
+            "$w_profile" "$profile" \
+            "$w_role" "$role" \
+            "$arn"
+    done
+}
 
 check_dependencies() {
     if ! command -v aws >/dev/null 2>&1; then
@@ -122,6 +184,24 @@ EOF
     rm -f "$tmp"
     [[ "$got" == "default keep-me " ]] || {
         error "self-check failed: got '$got'"
+        exit 1
+    }
+    local table hdr r1 r2
+    table=$(print_table \
+        $'111111111111\tshort\tAdmin\tarn:aws:iam::111111111111:role/Admin' \
+        $'222222222222\tlonger-profile\tOrganizationAccountAccessRole\tarn:aws:iam::222222222222:role/OrganizationAccountAccessRole')
+    hdr=$(printf '%s\n' "$table" | sed -n '1p')
+    r1=$(printf '%s\n' "$table" | sed -n '3p')
+    r2=$(printf '%s\n' "$table" | sed -n '4p')
+    [[ "$hdr" == ACCOUNT*PROFILE*ROLE*ARN* ]] || {
+        error "self-check failed: header '$hdr'"
+        exit 1
+    }
+    local p1 p2
+    p1=${r1%%Admin*}
+    p2=${r2%%OrganizationAccountAccessRole*}
+    [[ ${#p1} -eq ${#p2} ]] || {
+        error "self-check failed: ROLE column misaligned"
         exit 1
     }
     echo "self-check ok"
@@ -245,7 +325,7 @@ search_substring() {
     }
 }
 
-emit_hits() {
+collect_hits() {
     local account="$1"
     local profile="$2"
     local rows="$3"
@@ -253,7 +333,7 @@ emit_hits() {
     local name arn rest
     while IFS=$'\t' read -r name arn rest; do
         [[ -z "${name:-}" ]] && continue
-        printf '%s\t%s\t%s\t%s\n' "$account" "$profile" "$name" "$arn"
+        HITS+=("${account}"$'\t'"${profile}"$'\t'"${name}"$'\t'"${arn}")
         FOUND=$((FOUND + 1))
     done <<< "$rows"
 }
@@ -285,6 +365,7 @@ main() {
     for profile in "${PROFILES[@]}"; do
         if ! account=$(sts_account "$profile"); then
             warn "skip '$profile' (not logged in; aws sso login --profile $profile)"
+            SKIPPED=$((SKIPPED + 1))
             continue
         fi
         SCANNED=$((SCANNED + 1))
@@ -293,14 +374,22 @@ main() {
         else
             rows=$(search_substring "$profile")
         fi
-        emit_hits "$account" "$profile" "$rows"
+        collect_hits "$account" "$profile" "$rows"
     done
 
     if [[ "$SCANNED" -eq 0 ]]; then
         error "No reachable SSO profiles"
         exit 1
     fi
-    info "scanned=$SCANNED matches=$FOUND"
+
+    echo ""
+    if [[ ${#HITS[@]} -gt 0 ]]; then
+        print_table "${HITS[@]}"
+    else
+        info "no matches"
+    fi
+    echo ""
+    info "scanned=$SCANNED skipped=$SKIPPED matches=$FOUND"
     [[ "$FOUND" -gt 0 ]]
 }
 
