@@ -13,12 +13,14 @@ Convention: prefer **read-only** helpers for inventory/discovery. Write helpers 
 | [`list-resources.sh`](./list-resources.sh) | Read-only | List account resources via Resource Groups Tagging API (profiles/regions, optional report) | [List Resources](../list-resources/README.md) |
 | [`s3-bucket-object.sh`](./s3-bucket-object.sh) | Read-only | List S3 buckets and object counts | [cli/s3.md](../cli/s3.md) |
 | [`rds-modify-snapshot.sh`](./rds-modify-snapshot.sh) | **Write** | Batch-modify RDS DB snapshot option groups (supports `--dry-run`) | [RDS Deletion](../rds/deletion.md), [rds/](../rds/README.md) |
+| [`sg-audit.sh`](./sg-audit.sh) | Read-only | Ingress rules open to `0.0.0.0/0` or `::/0`, with a SENSITIVE flag for watched ports | [cli/security-groups.md](../cli/security-groups.md) |
+| [`rds-snapshot-age.sh`](./rds-snapshot-age.sh) | Read-only | Instance and cluster snapshots with age in days; flag older than `--min-age` | [RDS Deletion](../rds/deletion.md), [rds/](../rds/README.md) |
 
 ## Relationships
 
 - **EC2 inventory vs final snapshots:** `ec2-inventory.sh` only reports what exists. `ec2-final-snapshot.sh` creates intentional volume snapshots and/or AMIs before a change (does not terminate or delete).
-- **RDS:** `rds-modify-snapshot.sh` changes snapshot metadata (option groups); it does not delete instances. Pair with the RDS deletion guide when planning teardown.
-- **Discovery:** `list-resources.sh` is account-wide tagging-API discovery; `ec2-inventory.sh` is deep and instance-scoped.
+- **RDS:** `rds-modify-snapshot.sh` changes snapshot metadata (option groups); it does not delete instances. Pair with the RDS deletion guide when planning teardown. `rds-snapshot-age.sh` is read-only inventory of leftover/old snapshots.
+- **Discovery:** `list-resources.sh` is account-wide tagging-API discovery; `ec2-inventory.sh` is deep and instance-scoped. `sg-audit.sh` is a narrow world-open ingress check.
 
 ## Usage notes
 

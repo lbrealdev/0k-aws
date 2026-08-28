@@ -108,6 +108,7 @@ aws rds delete-db-instance \
 ## Related Scripts
 
 - [`scripts/rds-modify-snapshot.sh`](../scripts/rds-modify-snapshot.sh) — batch-modify RDS DB snapshot option groups (`awsbackup` or `manual` snapshots).
+- [`scripts/rds-snapshot-age.sh`](../scripts/rds-snapshot-age.sh) — read-only age report before cleaning leftover manuals.
 
 ## References
 
