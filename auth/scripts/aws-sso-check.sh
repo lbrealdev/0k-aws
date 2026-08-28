@@ -285,18 +285,37 @@ _strip_colors() {
     printf '%s' "$s"
 }
 
-# Escape backslashes in DATA (config-derived values) so they can never be
-# misinterpreted as the script's color tokens. Uses a same-length stand-in
-# (ASCII SUB) so width math on the escaped row matches visible output after
-# restore. Doubling alone is insufficient: "\e[31m" still matches inside "\\e".
+# Encode config-derived DATA so it cannot form color tokens (`\e[32m` etc.).
+# Doubling backslashes is insufficient: `\e[31m` still matches inside `\\e`.
+# Reversible for any byte, including ASCII SUB (0x1a):
+#   1. existing SUB -> SUB 's'
+#   2. backslash    -> SUB 'b'
+# Encoded form contains no raw `\`, so token substitution cannot hit data.
+# Decode SUB 'b' before SUB 's' so an original SUB+'b' is not a false `\`.
+# Width math uses the decoded string (pairs are 2 bytes, values 1).
 _esc_data() {
-    printf '%s' "${1//\\/$'\x1a'}"
+    local s="$1"
+    s="${s//$'\x1a'/$'\x1as'}"
+    s="${s//\\/$'\x1ab'}"
+    printf '%s' "$s"
 }
 
-# Render a panel row: data backslashes were already escaped by _esc_data at
-# build time, so the ONLY remaining escape-looking sequences are the script's
-# own color tokens - translated to ANSI only when the terminal supports
-# colors (GREEN non-empty). Emits literally via printf '%s'.
+_unesc_data() {
+    local s="$1"
+    s="${s//$'\x1ab'/\\}"
+    s="${s//$'\x1as'/$'\x1a'}"
+    printf '%s' "$s"
+}
+
+# Visible (colorless, decoded) form of a panel row; used for width math.
+_visible_plain() {
+    _unesc_data "$(_strip_colors "$1")"
+}
+
+# Render a panel row: data was already encoded by _esc_data at build time, so
+# the ONLY remaining escape-looking sequences are the script's own color
+# tokens - translated to ANSI only when the terminal supports colors
+# (GREEN non-empty). Then restore data bytes. Emits literally via printf '%s'.
 _render() {
     local s="$1"
     if [ -n "$GREEN" ]; then
@@ -307,8 +326,7 @@ _render() {
         s="${s//\\e[90m/$'\e[90m'}"
         s="${s//\\e[0m/$'\e[0m'}"
     fi
-    s="${s//$'\x1a'/\\}"
-    printf '%s' "$s"
+    _unesc_data "$s"
 }
 
 # Print a pure-ASCII panel around one or more rows. Frame width fits the
@@ -318,7 +336,7 @@ print_panel() {
     local row plain max=0
 
     for row in "${rows[@]}"; do
-        plain=$(_strip_colors "$row")
+        plain=$(_visible_plain "$row")
         if [ "${#plain}" -gt "$max" ]; then
             max=${#plain}
         fi
@@ -326,7 +344,7 @@ print_panel() {
 
     printf '+%s+\n' "$(_dashes $((max + 2)))"
     for row in "${rows[@]}"; do
-        plain=$(_strip_colors "$row")
+        plain=$(_visible_plain "$row")
         printf '| '
         _render "$row"
         printf '%*s |\n' "$((max - ${#plain}))" ''
