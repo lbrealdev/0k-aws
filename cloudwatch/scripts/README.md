@@ -17,6 +17,7 @@ Concepts and failure codes: [`../billing-alarm-misconfigurations.md`](../billing
 
 - [`uv`](https://docs.astral.sh/uv/)
 - SSO / AWS credentials for the **central** profile (account that holds the alarms)
+- Named profile only (`-p`): `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` must be unset (boto3 would otherwise ignore `-p`)
 - IAM:
   - `sts:GetCallerIdentity`
   - `cloudwatch:DescribeAlarms`

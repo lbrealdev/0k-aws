@@ -7,8 +7,11 @@
 # ///
 """Inventory WARN/CRIT CloudWatch billing alarms and assess thresholds.
 
-Round 1 (inventory): classify alarms, map linked accounts, mark WARN for removal.
+Round 1 (inventory): classify alarms, map linked accounts, flag WARN labels.
 Round 2 (assess): compare each alarm threshold to last-month spend and AWS Budgets.
+
+WARN-labelled alarms are noted as removal *candidates* only. Retiring WARN is
+not an approved policy until the org confirms it.
 """
 
 from __future__ import annotations
@@ -31,6 +34,11 @@ from botocore.exceptions import BotoCoreError, ClientError
 SCRIPT_NAME = "analyze-billing-alarms.py"
 BILLING_REGION = "us-east-1"
 ACCOUNT_ID_RE = re.compile(r"(?<!\d)(\d{12})(?!\d)")
+ENV_CREDENTIAL_VARS = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+)
 
 
 def log(msg: str) -> None:
@@ -52,6 +60,17 @@ def require_profile(profile: str | None) -> str:
     if not profile:
         die("Provide -p/--profile (central SSO profile that holds the alarms)", 1)
     return profile
+
+
+def reject_env_credentials() -> None:
+    present = [name for name in ENV_CREDENTIAL_VARS if os.environ.get(name)]
+    if present:
+        die(
+            "named profile only (-p/--profile); unset "
+            + ", ".join(present)
+            + " (env credentials override the profile in boto3's default chain)",
+            1,
+        )
 
 
 @dataclass
@@ -109,7 +128,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog=SCRIPT_NAME,
         description=(
             "Two-round billing alarm tool: inventory WARN/CRIT CloudWatch alarms, "
-            "then assess thresholds vs last-month spend and AWS Budgets."
+            "then assess thresholds vs last-month spend and AWS Budgets. "
+            "Named profile only (-p); unset AWS_ACCESS_KEY_ID / "
+            "AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN (they override the profile)."
         ),
     )
     sub = p.add_subparsers(dest="command", required=True)
@@ -257,7 +278,7 @@ def inventory_alarm_record(
         record.add_finding(
             "WARN_REMOVE_CANDIDATE",
             "info",
-            "WARN billing alarm - approved removal candidate; keep CRIT only",
+            "WARN billing alarm - unconfirmed removal candidate; not an approved policy",
         )
 
     if not linked_account_id:
@@ -599,7 +620,7 @@ def run_assess(profile: str, region: str, inventory: dict[str, Any]) -> dict[str
         notes: list[str] = []
 
         if severity == "WARN":
-            notes.append("WARN_REMOVE_CANDIDATE - approved removal candidate")
+            notes.append("WARN_REMOVE_CANDIDATE - unconfirmed; not an approved policy")
         elif severity == "UNKNOWN":
             notes.append("UNKNOWN_SEVERITY - alarm name has no WARN/CRIT token")
 
@@ -833,6 +854,7 @@ def main(argv: list[str] | None = None) -> int:
         return int(e.code) if isinstance(e.code, int) else 1
 
     profile = require_profile(args.profile)
+    reject_env_credentials()
     region = resolve_region(args.region)
     if args.format == "markdown" and not args.output:
         die("markdown format requires -o/--output PATH (does not print to the terminal)", 1)
