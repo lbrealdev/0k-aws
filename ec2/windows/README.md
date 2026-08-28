@@ -2,6 +2,8 @@
 
 Operational guides for Windows Server instances — patch state and related on-box checks.
 
+Investigation only: these guides do not install updates or reboot.
+
 ## Guides
 
 - [Updates](./updates.md) — installed KBs, Windows Update history, pending updates, pending reboot

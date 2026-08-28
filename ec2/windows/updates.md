@@ -2,7 +2,7 @@
 
 Patch state on a Windows Server instance: what is installed, what failed, what is still waiting, and whether a reboot is pending.
 
-Run in an elevated PowerShell session on the instance.
+**Investigation only.** Run in an elevated PowerShell session on the instance. Do not install updates or reboot from this guide (`Install-WindowsUpdate`, `Add-WUPackage`, `Restart-Computer`, `shutdown /r`). Windows Update `Search()` is a query; it does not download or install.
 
 ## Why this matters
 
@@ -26,33 +26,37 @@ Get-HotFix |
   Format-Table -AutoSize
 ```
 
-One KB:
+One KB (replace the id):
 
 ```powershell
-Get-HotFix -Id KB5044284
+Get-HotFix -Id KB#########
 ```
 
 ## 3. Update history
 
 Use this when dates in `Get-HotFix` are missing or you need success/failure.
 
+`QueryHistory` is reverse chronological (most recent first). Skip the call when the log is empty — `QueryHistory(0, 0)` throws.
+
 ```powershell
 $searcher = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
 $count = $searcher.GetTotalHistoryCount()
-$searcher.QueryHistory(0, $count) |
-  Select-Object Date, Title, @{N='Result';E={
-    switch ($_.ResultCode) {
-      2 {'Succeeded'} 3 {'SucceededWithErrors'} 4 {'Failed'} 5 {'Aborted'} default {$_.ResultCode}
-    }
-  }} |
-  Sort-Object Date -Descending |
-  Select-Object -First 30 |
-  Format-Table -AutoSize
+if ($count -eq 0) {
+  'No update history'
+} else {
+  $searcher.QueryHistory(0, [Math]::Min($count, 30)) |
+    Select-Object Date, Title, @{N='Result';E={
+      switch ($_.ResultCode) {
+        2 {'Succeeded'} 3 {'SucceededWithErrors'} 4 {'Failed'} 5 {'Aborted'} default {$_.ResultCode}
+      }
+    }} |
+    Format-Table -AutoSize
+}
 ```
 
 ## 4. Pending / available
 
-Does not install anything.
+Does not install or download anything. `Search` may take a while; it talks to Windows Update or WSUS.
 
 ```powershell
 $searcher = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
@@ -72,11 +76,13 @@ $result.Updates | Select-Object Title | Format-Table -AutoSize
 
 ## 5. Pending reboot
 
+Read-only registry checks. Does not reboot.
+
 ```powershell
 $cbs = Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'
 $wu  = Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
 $sm  = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
-$pfn = $null -ne $sm.PendingFileRenameOperations
+$pfn = $null -ne $sm -and $null -ne $sm.PendingFileRenameOperations
 
 [PSCustomObject]@{
   CbsRebootPending  = $cbs
@@ -89,4 +95,4 @@ $pfn = $null -ne $sm.PendingFileRenameOperations
 ## Related
 
 - [Windows on EC2](./README.md)
-- [Manual / final snapshots](../manual-snapshots.md)
+- [Manual / final snapshots](../manual-snapshots.md) — take a snapshot before any later patch reboot when rollback matters
