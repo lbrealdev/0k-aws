@@ -8,7 +8,7 @@
 """Find which S3 bucket in the account holds an exact object key.
 
 Read-only. Lists buckets, resolves each bucket region, then HEAD/list
-the key. Intended for Terraform backends that only declare `key`.
+the key.
 
 Exit codes: 0 completed, 1 usage, 2 AWS error.
 """
@@ -23,7 +23,7 @@ from typing import Any, Literal
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-SCRIPT_NAME = "s3-find-state.py"
+SCRIPT_NAME = "s3-find-key.py"
 CONTROL_REGION = "us-east-1"
 ENV_CREDENTIAL_VARS = (
     "AWS_ACCESS_KEY_ID",
@@ -60,23 +60,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "(read-only). Lists all buckets, resolves each bucket's region,\n"
             "then tests the key with HeadObject (ListObjectsV2 fallback).\n"
             "\n"
-            "Intended for Terraform backends that only declare `key` (bucket\n"
-            "and region come from the pipeline).\n"
-            "\n"
             "Auth: prefer -p/--profile (SSO). If --profile is set, unset\n"
             "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN\n"
             "(boto3 would let env override the profile)."
         ),
         epilog=(
             "Examples:\n"
-            f"  {SCRIPT_NAME} --key env/prod/terraform.tfstate -p my-sso\n"
-            f"  {SCRIPT_NAME} --key env/prod/terraform.tfstate --prefix tfstate-"
+            f"  {SCRIPT_NAME} --key data/pipeline/output.json -p my-sso\n"
+            f"  {SCRIPT_NAME} --key data/pipeline/output.json --prefix backups-"
         ),
     )
     p.add_argument(
         "--key",
         required=True,
-        help="Exact S3 object key (e.g. env/prod/terraform.tfstate)",
+        help="Exact S3 object key (e.g. data/pipeline/output.json)",
     )
     p.add_argument(
         "--prefix",
