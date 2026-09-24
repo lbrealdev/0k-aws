@@ -20,18 +20,25 @@ SKIPPED=0
 usage() {
     cat << EOF
 Usage: $0 QUERY [OPTIONS]
-       $0 --role-name NAME [OPTIONS]
+       $0 --name NAME [OPTIONS]
        $0 --check
 
 Find an IAM role across AWS SSO profiles.
 
 Options:
   QUERY              Substring match on RoleName or Arn
-  --role-name NAME   Exact RoleName
+  --name, -n NAME    Exact RoleName
   --profile, -p NAME Limit to this profile
   --profiles LIST    Comma-separated profiles
   --check            Validate SSO profiles in ~/.aws/config
   --help, -h         Show this help
+EOF
+}
+
+short_usage() {
+    cat << EOF
+Usage: $0 QUERY | --name NAME | --check
+Try '$0 --help' for more information.
 EOF
 }
 
@@ -161,7 +168,7 @@ check() {
     local n=0
     mapfile -t profiles < <(discover_sso_profiles "$AWS_CONFIG_FILE")
     n=${#profiles[@]}
-    echo "Found $n SSO profile(s)"
+    echo "Found $n SSO profiles in $AWS_CONFIG_FILE"
     if [[ "$n" -eq 0 ]]; then
         exit 1
     fi
@@ -178,12 +185,12 @@ parse_args() {
             --check)
                 check
                 ;;
-            --role-name|--role-name=*)
-                if [[ "$1" == --role-name=* ]]; then
+            --name|--name=*|-n|-n=*)
+                if [[ "$1" == --name=* || "$1" == -n=* ]]; then
                     ROLE_NAME="${1#*=}"
                     shift
                 elif [[ -z "${2:-}" || "$2" == --* ]]; then
-                    error "Option --role-name requires a value"
+                    error "Option --name requires a value"
                     exit 2
                 else
                     ROLE_NAME="$2"
@@ -300,18 +307,18 @@ collect_hits() {
 
 main() {
     parse_args "$@"
-    check_dependencies
-    refuse_env_credentials
 
     if [[ -z "$ROLE_NAME" && -z "$QUERY" ]]; then
-        error "Provide QUERY or --role-name"
-        usage
+        short_usage
         exit 2
     fi
     if [[ -n "$ROLE_NAME" && -n "$QUERY" ]]; then
-        error "Use QUERY or --role-name, not both"
+        error "Use QUERY or --name, not both"
         exit 2
     fi
+
+    check_dependencies
+    refuse_env_credentials
 
     if [[ ${#PROFILES[@]} -eq 0 ]]; then
         mapfile -t PROFILES < <(discover_sso_profiles "$AWS_CONFIG_FILE")
