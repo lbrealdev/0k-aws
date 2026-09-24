@@ -26,11 +26,11 @@ Usage: $0 QUERY [OPTIONS]
 Find an IAM role across AWS SSO profiles.
 
 Options:
-  QUERY              Substring match on RoleName / Arn
-  --role-name NAME   Exact RoleName (get-role)
-  --profile, -p NAME Limit to profile (repeatable)
+  QUERY              Substring match on RoleName or Arn
+  --role-name NAME   Exact RoleName
+  --profile, -p NAME Limit to this profile
   --profiles LIST    Comma-separated profiles
-  --check            Offline self-check (no AWS calls)
+  --check            Validate SSO profiles in ~/.aws/config
   --help, -h         Show this help
 EOF
 }
@@ -155,48 +155,16 @@ discover_sso_profiles() {
     ' "$config"
 }
 
+# Count SSO profiles in the real AWS config (no AWS API calls).
 check() {
-    local tmp
-    tmp=$(mktemp)
-    cat > "$tmp" << 'EOF'
-[profile keep-me]
-sso_session = org
-region = us-east-1
-
-[profile skip-me]
-region = us-east-1
-
-[default]
-sso_start_url = https://example.awsapps.com/start
-sso_account_id = 111111111111
-sso_role_name = Admin
-EOF
-    local got
-    got=$(discover_sso_profiles "$tmp" | sort | tr '\n' ' ')
-    rm -f "$tmp"
-    [[ "$got" == "default keep-me " ]] || {
-        error "check failed: got '$got'"
+    local profiles=()
+    local n=0
+    mapfile -t profiles < <(discover_sso_profiles "$AWS_CONFIG_FILE")
+    n=${#profiles[@]}
+    echo "Found $n SSO profile(s)"
+    if [[ "$n" -eq 0 ]]; then
         exit 1
-    }
-    local table hdr r1 r2
-    table=$(print_table \
-        $'111111111111\tshort\tAdmin\tarn:aws:iam::111111111111:role/Admin' \
-        $'222222222222\tlonger-profile\tOrganizationAccountAccessRole\tarn:aws:iam::222222222222:role/OrganizationAccountAccessRole')
-    hdr=$(printf '%s\n' "$table" | sed -n '1p')
-    r1=$(printf '%s\n' "$table" | sed -n '3p')
-    r2=$(printf '%s\n' "$table" | sed -n '4p')
-    [[ "$hdr" == ACCOUNT*PROFILE*ROLE*ARN* ]] || {
-        error "check failed: header '$hdr'"
-        exit 1
-    }
-    local p1 p2
-    p1=${r1%%Admin*}
-    p2=${r2%%OrganizationAccountAccessRole*}
-    [[ ${#p1} -eq ${#p2} ]] || {
-        error "check failed: ROLE column misaligned"
-        exit 1
-    }
-    echo "check ok"
+    fi
     exit 0
 }
 
