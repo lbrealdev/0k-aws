@@ -21,25 +21,17 @@ usage() {
     cat << EOF
 Usage: $0 QUERY [OPTIONS]
        $0 --role-name NAME [OPTIONS]
+       $0 --check
 
-Search IAM roles across AWS SSO profiles in ~/.aws/config.
-SSO login required per profile. Static env credentials are refused.
+Find an IAM role across AWS SSO profiles.
 
-  QUERY                 Substring match on RoleName and Arn (case-sensitive)
-  --role-name NAME      Exact RoleName via get-role (one call per account)
-  --profile, -p NAME    Limit to this profile (repeatable)
-  --profiles LIST       Comma-separated profile names
-  --help, -h            Show this help message
-
-STS / AccessDenied on a profile is skipped, not fatal.
-
-Prints an aligned table (ACCOUNT | PROFILE | ROLE | ARN).
-Exit 0 if at least one match, 1 if none (or no reachable profiles).
-
-Examples:
-  $0 Admin
-  $0 --role-name OrganizationAccountAccessRole
-  $0 AWSReservedSSO_ --profile prod --profile staging
+Options:
+  QUERY              Substring match on RoleName / Arn
+  --role-name NAME   Exact RoleName (get-role)
+  --profile, -p NAME Limit to profile (repeatable)
+  --profiles LIST    Comma-separated profiles
+  --check            Offline self-check (no AWS calls)
+  --help, -h         Show this help
 EOF
 }
 
@@ -163,7 +155,7 @@ discover_sso_profiles() {
     ' "$config"
 }
 
-self_check() {
+check() {
     local tmp
     tmp=$(mktemp)
     cat > "$tmp" << 'EOF'
@@ -183,7 +175,7 @@ EOF
     got=$(discover_sso_profiles "$tmp" | sort | tr '\n' ' ')
     rm -f "$tmp"
     [[ "$got" == "default keep-me " ]] || {
-        error "self-check failed: got '$got'"
+        error "check failed: got '$got'"
         exit 1
     }
     local table hdr r1 r2
@@ -194,17 +186,17 @@ EOF
     r1=$(printf '%s\n' "$table" | sed -n '3p')
     r2=$(printf '%s\n' "$table" | sed -n '4p')
     [[ "$hdr" == ACCOUNT*PROFILE*ROLE*ARN* ]] || {
-        error "self-check failed: header '$hdr'"
+        error "check failed: header '$hdr'"
         exit 1
     }
     local p1 p2
     p1=${r1%%Admin*}
     p2=${r2%%OrganizationAccountAccessRole*}
     [[ ${#p1} -eq ${#p2} ]] || {
-        error "self-check failed: ROLE column misaligned"
+        error "check failed: ROLE column misaligned"
         exit 1
     }
-    echo "self-check ok"
+    echo "check ok"
     exit 0
 }
 
@@ -215,8 +207,8 @@ parse_args() {
                 usage
                 exit 0
                 ;;
-            --self-check)
-                self_check
+            --check)
+                check
                 ;;
             --role-name|--role-name=*)
                 if [[ "$1" == --role-name=* ]]; then
