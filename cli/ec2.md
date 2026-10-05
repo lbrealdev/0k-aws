@@ -1,6 +1,6 @@
 # EC2
 
-List EC2 instances by filtering by tag:name value with queries to display some reverse sort data fields for runtime with table output format:
+List instances by Name tag and state (table, newest first):
 ```shell
 aws ec2 describe-instances \
   --filters "Name=tag:Name,Values=<instance-name>" \

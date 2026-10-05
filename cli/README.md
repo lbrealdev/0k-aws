@@ -57,7 +57,7 @@ Or set `AWS_PAGER=""` in the environment.
 
 ### Credential chain gotchas
 
-The CLI resolves credentials from several sources (environment variables, shared config/credentials files, SSO cache, etc.). If identity looks “wrong”:
+The CLI resolves credentials from several sources, including environment variables, shared config/credentials files, and the SSO cache. If identity looks “wrong”:
 
 1. Check `aws sts get-caller-identity` (with and without `--profile`)
 2. Inspect `aws configure list`
