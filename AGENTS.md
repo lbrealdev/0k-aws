@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Personal inventory of AWS notes and helper scripts, grounded in day-to-day practical experience: procedures that work, and how AWS behaves in practice from what the owner sees, works, and integrates.
+Personal AWS notes and helper scripts from day-to-day practical experience: procedures that work, and how AWS behaves in practice.
 
 For coding agents and humans adding guides or helpers to this repo. Out of scope: a general AWS textbook, product marketing, or unrelated cloud platforms.
 
@@ -16,10 +16,17 @@ Applies to `*.sh` and Python. Python helpers that need third-party deps (includi
 
 Put shared/cross-area helpers under root `scripts/`. Put area-specific helpers under that area’s `scripts/` (e.g. `auth/scripts/`). Add new scripts next to related work; index them as described under Docs.
 
+### Shell baseline
+
+- New shell scripts use `#!/bin/bash` and `set -euo pipefail`.
+- Check required tools at runtime with `command -v` before first use; fail clearly on stderr with exit 2.
+- Never list dependencies in `--help`.
+
 ### Help / CLI
 
 - Every script supports `--help` / `-h` by default.
 - No arguments → short usage plus `Try --help` (or equivalent) on stderr, exit 2. No `[ERROR]` prefix, no full help dump.
+- Unknown flags follow the same path: short usage plus `Try --help` (or equivalent) on stderr, exit 2. No `[ERROR]` prefix, no full help dump.
 - `-h` / `--help` → lean help on stdout, exit 0: **Usage**, brief purpose, **Options** only. No Exit or Examples blocks.
 
 ### Auth
@@ -27,7 +34,7 @@ Put shared/cross-area helpers under root `scripts/`. Put area-specific helpers u
 Support AWS SSO (primary) and environment credentials — caller’s choice.
 
 - Prefer explicit `--profile` / `--region` when the script uses named profiles.
-- If the script exposes `--profile`, refuse when `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, or `AWS_SESSION_TOKEN` is set (they override the profile). Document that in `--help` or the script’s README entry.
+- If the script exposes `--profile`, refuse when `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, or `AWS_SESSION_TOKEN` is set (they override the profile). Document that only in the script’s entry in `scripts/README.md` or the area `scripts/README.md` — never in `--help`.
 - If neither a usable profile nor env credentials are available, fail clearly on stderr with exit 2.
 
 ### Exits
