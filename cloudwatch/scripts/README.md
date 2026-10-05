@@ -4,8 +4,8 @@
 
 Read-only **two-round** tool for centralized CloudWatch billing alarms (`AWS/Billing` / `EstimatedCharges`):
 
-1. **`inventory`** — list alarms, classify `WARN` / `CRIT`, map linked accounts, mark WARN as removal candidates.
-2. **`assess`** — for **all** inventory alarms, compare thresholds to last-month spend + AWS Budgets (live AWS data only).
+1. **`inventory`**: list alarms, classify `WARN` / `CRIT`, map linked accounts, mark WARN as removal candidates.
+2. **`assess`**: for all inventory alarms, compare thresholds to last-month spend + AWS Budgets (live AWS data only).
 
 Implemented as a [uv inline script](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies) (PEP 723) with `boto3`.
 
@@ -44,7 +44,7 @@ Concepts and failure codes: [`../billing-alarm-misconfigurations.md`](../billing
 | `--profile` | `-p` | required | Central AWS profile |
 | `--region` | `-r` | env / `us-east-1` | AWS region |
 | `--format` | `-f` | `table` | `table` \| `json` \| `markdown` |
-| `--output` | `-o` | — | Write report to PATH (UTF-8). **Required for markdown** |
+| `--output` | `-o` | (none) | Write report to PATH (UTF-8). **Required for markdown** |
 | `--from` | | required for `assess` | Inventory JSON from `inventory -f json` |
 | `--help` | `-h` | | Show help |
 
@@ -79,8 +79,8 @@ Reports use **live AWS values only** (no hard-coded example dollar amounts).
 
 Read-only **per-account** review using **two named SSO profiles** (not env credentials):
 
-1. **Hub (`--hub`)** — payer account: CloudWatch billing alarms + Budgets for the member  
-2. **Account (`-a` / `--account`)** — Cost Explorer UnblendedCost for last 1/3/6 complete months + MTD (1st → today)
+1. **Hub (`--hub`)**: payer account: CloudWatch billing alarms + Budgets for the member  
+2. **Account (`-a` / `--account`)**: Cost Explorer UnblendedCost for last 1/3/6 complete months + MTD (1st → today)
 
 `--hub` and `--account` are SSO profile names, not account ids. The script does **not** use `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`; if those are set it exits with a usage error (boto3 would otherwise let them override the profiles, and env creds cannot select two accounts).
 
@@ -114,7 +114,7 @@ On a TTY, a one-line spinner runs on stderr while AWS calls are in flight, then 
 | `--hub` | | required | Hub (payer) SSO profile |
 | `--account` | `-a` | required | Member account SSO profile |
 | `--months` | | `6` | Complete months of CE history |
-| `--budget` | | — | Substring filter on budget name |
+| `--budget` | | (none) | Substring filter on budget name |
 | `--color` | | `auto` | ANSI color: `auto` (TTY only), `always`, or `never` |
 | `--help` | `-h` | | Show help |
 

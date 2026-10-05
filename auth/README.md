@@ -2,8 +2,8 @@
 
 Methods for authenticating with AWS:
 
-- [AWS SSO](./sso.md) — SSO / IAM Identity Center for multi-account access, recommended for organizations
-- IAM user — long-term credentials; see [Authenticating using IAM user credentials for the AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/cli-authentication-user.html)
+- [AWS SSO](./sso.md): SSO / IAM Identity Center for multi-account access, recommended for organizations
+- IAM user: long-term credentials; see [Authenticating using IAM user credentials for the AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/cli-authentication-user.html)
 
 ## IAM Identity Center references
 
@@ -15,6 +15,6 @@ Methods for authenticating with AWS:
 
 ## Related CLI references
 
-- [`cli/configure.md`](../cli/configure.md) — credentials and defaults
-- [`cli/sso.md`](../cli/sso.md) — SSO / Identity Center commands
-- [`cli/sts.md`](../cli/sts.md) — caller identity and temporary credentials
+- [`cli/configure.md`](../cli/configure.md): credentials and defaults
+- [`cli/sso.md`](../cli/sso.md): SSO / Identity Center commands
+- [`cli/sts.md`](../cli/sts.md): caller identity and temporary credentials

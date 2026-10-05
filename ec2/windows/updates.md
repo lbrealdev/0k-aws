@@ -6,7 +6,7 @@ Patch state on a Windows Server instance: what is installed, what failed, what i
 
 ## Why this matters
 
-- `Get-HotFix` is incomplete — `InstalledOn` is often blank; history is the install record.
+- `Get-HotFix` is incomplete: `InstalledOn` is often blank; history is the install record.
 - A KB can show as installed while a reboot is still pending.
 - Pending vs downloaded-not-installed tells you whether Update is stuck or just waiting.
 
@@ -36,7 +36,7 @@ Get-HotFix -Id KB#########
 
 Use this when dates in `Get-HotFix` are missing or you need success/failure.
 
-`QueryHistory` is reverse chronological (most recent first). Skip the call when the log is empty — `QueryHistory(0, 0)` throws.
+`QueryHistory` is reverse chronological (most recent first). Skip the call when the log is empty: `QueryHistory(0, 0)` throws.
 
 ```powershell
 $searcher = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
@@ -95,4 +95,4 @@ $pfn = $null -ne $sm -and $null -ne $sm.PendingFileRenameOperations
 ## Related
 
 - [Windows on EC2](./README.md)
-- [Manual / final snapshots](../manual-snapshots.md) — take a snapshot before any later patch reboot when rollback matters
+- [Manual / final snapshots](../manual-snapshots.md): take a snapshot before any later patch reboot when rollback matters

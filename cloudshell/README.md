@@ -15,9 +15,9 @@ mv mise ~/.local/bin
 
 ### Just
 
-Install `just`:
+Install `just` (pinned via mise, like the rest of this repo):
 ```shell
-curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | sudo bash -s -- --to ~/.local/bin
+mise use -g just
 ```
 
 ## Related links

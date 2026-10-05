@@ -2,7 +2,7 @@
 
 Universal Command Line Interface for Amazon Web Services.
 
-This directory is a cheat-sheet index for day-to-day `aws` usage. **Convention:** each markdown file maps to an AWS CLI subcommand or service area (`configure` → `aws configure`, `ec2` → `aws ec2`, `s3` → `aws s3`, and so on). This README is the hub for setup pointers and common nuances — not a subcommand page.
+This directory is a cheat-sheet index for day-to-day `aws` usage. **Convention:** each markdown file maps to an AWS CLI subcommand or service area (`configure` → `aws configure`, `ec2` → `aws ec2`, `s3` → `aws s3`, and so on). This README is the hub for setup pointers and common nuances, not a subcommand page.
 
 Install: see [install/](./install/README.md) for AWS CLI v2.
 
@@ -10,10 +10,10 @@ Install: see [install/](./install/README.md) for AWS CLI v2.
 
 After install, configure credentials and defaults, then authenticate the way your account expects:
 
-- [configure](./configure.md) — `aws configure list`, import access-key CSV
-- [login](./login.md) — sign in/out (`aws sso login` / `aws sso logout`, stored keys)
-- [SSO](./sso.md) — SSO admin / Identity Center related commands
-- [STS](./sts.md) — caller identity and temporary credentials
+- [configure](./configure.md): `aws configure list`, import access-key CSV
+- [login](./login.md): sign in/out (`aws sso login` / `aws sso logout`, stored keys)
+- [SSO](./sso.md): SSO admin / Identity Center related commands
+- [STS](./sts.md): caller identity and temporary credentials
 - Broader auth methods: [auth/](../auth/README.md)
 
 ## Everyday nuances

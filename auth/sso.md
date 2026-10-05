@@ -1,8 +1,6 @@
 # AWS SSO
 
-AWS Single Sign-On (SSO) / IAM Identity Center is the recommended way to authenticate to AWS for organizations with multiple accounts.
-
-SSO provides centralized authentication and authorization across AWS accounts in AWS Organizations.
+AWS Single Sign-On (SSO) / IAM Identity Center is the recommended way to authenticate to AWS for organizations with multiple accounts. This page sets up SSO profiles in `~/.aws/config`.
 
 ## Prerequisites
 
@@ -14,7 +12,7 @@ SSO provides centralized authentication and authorization across AWS accounts in
 
 SSO profile settings belong in `~/.aws/config`.
 
-## Method 1 — Recommended (`sso-session`)
+## Method 1: Recommended (`sso-session`)
 
 Share one `[sso-session …]` across accounts, then point each named profile at that session with its own account and role.
 
@@ -54,7 +52,7 @@ aws sts get-caller-identity --profile account-a
 aws sts get-caller-identity --profile account-b
 ```
 
-## Method 2 — Legacy (inline profile keys)
+## Method 2: Legacy (inline profile keys)
 
 Put all `sso_*` keys on each `[profile …]` when you are not using an `sso-session` block.
 
@@ -96,4 +94,4 @@ Then open a new terminal and run `aws sso login` (no export). Override with `--p
 
 ## Scripts
 
-- [`aws-sso-check.sh`](./scripts/aws-sso-check.sh) — validate SSO profiles; `--check-config` / `--check-env` for local inspection
+- [`aws-sso-check.sh`](./scripts/aws-sso-check.sh): validate SSO profiles; `--check-config` / `--check-env` for local inspection
