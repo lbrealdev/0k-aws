@@ -27,14 +27,14 @@ For the step-by-step procedure, see [Eliminate EC2 instances](./elimination.md).
 
 These are related but not interchangeable:
 
-- **EBS snapshot** — backup of a single volume. Fastest primitive for volume restore.
-- **AMI** — package of instance configuration + one or more snapshots. Needed to relaunch an instance image cleanly.
-- **DLM** — automation that creates/retains/deletes snapshots or AMIs on a schedule. Disabling/deleting instances does not remove the policy.
-- **AWS Backup** — organization-friendly backup plans and vaults. Recovery points may appear as snapshots in EC2, but lifecycle is controlled by Backup (especially when vault lock / retention rules apply).
+- **EBS snapshot**: backup of a single volume. Fastest primitive for volume restore.
+- **AMI**: package of instance configuration + one or more snapshots. Needed to relaunch an instance image cleanly.
+- **DLM**: automation that creates/retains/deletes snapshots or AMIs on a schedule. Disabling/deleting instances does not remove the policy.
+- **AWS Backup**: organization-friendly backup plans and vaults. Recovery points may appear as snapshots in EC2, but lifecycle is controlled by Backup (especially when vault lock / retention rules apply).
 
 For elimination projects, inventory **all four**. Keeping only “EC2 console snapshots” is incomplete.
 
 ## Related
 
-- [Eliminate EC2 instances](./elimination.md) — inventory, backups, and termination checklist
-- [AWS Backup recovery points](./backup-recovery-points.md) — recovery-point filter reference
+- [Eliminate EC2 instances](./elimination.md): inventory, backups, and termination checklist
+- [AWS Backup recovery points](./backup-recovery-points.md): recovery-point filter reference

@@ -9,8 +9,8 @@ A personal wiki of AWS knowledge: CLI cheat sheets, operational guides, and help
 | [cloudshell/](./cloudshell/README.md) | Persistent tooling (mise, just) in the CloudShell environment |
 | [cloudwatch/](./cloudwatch/README.md) | Billing alarm analysis and CloudWatch helpers |
 | [ec2/](./ec2/README.md) | Inventory, manual/final snapshots, safe elimination, Windows patch-state checks |
-| [rds/](./rds/README.md) | RDS deletion considerations and checklist |
-| [list-resources/](./list-resources/README.md) | Account-wide discovery: AWS Config, Cloud Control API, CDK, Steampipe |
+| [rds/](./rds/README.md) | RDS deletion how-to |
+| [list-resources/](./list-resources/README.md) | Account-wide discovery: AWS Config, Cloud Control API, Steampipe |
 | [dev-tools/](./dev-tools/README.md) | CodeCommit, CodeBuild, CodePipeline, reporting scripts |
 | [scripts/](./scripts/README.md) | Helper scripts, each marked read-only or write |
 

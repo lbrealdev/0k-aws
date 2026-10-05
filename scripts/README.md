@@ -27,4 +27,4 @@ Convention: prefer **read-only** helpers for inventory/discovery. Write helpers 
 
 - Requires AWS CLI (and `jq` where noted by each script).
 - Pass `--profile` / `--region` (or configure defaults) as documented in each script’s `--help`.
-- Always prefer `--dry-run` on write scripts before applying changes.
+- On write scripts, run `--dry-run` before applying changes.

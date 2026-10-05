@@ -122,7 +122,7 @@ For deeper manual vault inspection, per-recovery-point tag checks, and when a ta
 Decide retention before terminate:
 
 1. **Need relaunchable image?** Create an AMI via [`ec2-final-snapshot.sh --mode ami`](../scripts/ec2-final-snapshot.sh) (running instances reboot by default) or the CLI below.
-2. **Need volume-level restore only?** Use `--mode volumes` (default) on the same helper — see [manual / final snapshots](./manual-snapshots.md).
+2. **Need volume-level restore only?** Use `--mode volumes` (default) on the same helper, see [manual / final snapshots](./manual-snapshots.md).
 3. **Already covered by AWS Backup / DLM?** Confirm recent successful recovery points before deleting compute.
 
 ### Create a final AMI
@@ -223,9 +223,9 @@ Manual snapshots persist until deleted and incur storage cost. Set a reminder to
 
 ## Related
 
-- [Why EC2 elimination matters](./elimination-explanation.md) — resource map and backup trade-offs
-- [AWS Backup recovery points](./backup-recovery-points.md) — recovery-point filter reference
-- [`scripts/ec2-inventory.sh`](../scripts/ec2-inventory.sh) — instance-scoped JSON/CSV report (`--instance` required; `-f json|csv`)
+- [Why EC2 elimination matters](./elimination-explanation.md): resource map and backup trade-offs
+- [AWS Backup recovery points](./backup-recovery-points.md): recovery-point filter reference
+- [`scripts/ec2-inventory.sh`](../scripts/ec2-inventory.sh): instance-scoped JSON/CSV report (`--instance` required; `-f json|csv`)
 
 ## References
 

@@ -1,6 +1,6 @@
 # Manual / final EC2 snapshots
 
-Intentional backups before a destructive or hard-to-reverse EC2 change — decommission, volume replace, migration, or a risky config change. This is a day-to-day ops practice; elimination is one consumer of it.
+Intentional backups before a destructive or hard-to-reverse EC2 change: decommission, volume replace, migration, or a risky config change. This is a day-to-day ops practice; elimination is one consumer of it.
 
 For a full teardown checklist, see [EC2 Elimination](./elimination.md).
 
@@ -22,7 +22,7 @@ For a full teardown checklist, see [EC2 Elimination](./elimination.md).
 
 - **Volumes mode:** crash-consistent multi-volume set (`create-snapshots`). Prefer stopping first when downtime is OK.
 - **AMI mode (default):** for a **running** instance, AWS **reboots** during `create-image` so buffered data is flushed (safer). A stopped instance stays stopped.
-- **AMI `--no-reboot`:** crash-consistent AMI; filesystem integrity is not guaranteed — use only when reboot is unacceptable.
+- **AMI `--no-reboot`:** crash-consistent AMI; filesystem integrity is not guaranteed; use only when reboot is unacceptable.
 
 ## Tagging model
 
@@ -35,7 +35,7 @@ AMI tag precedence: `Purpose` (always) > `--tag` > instance tags. Merged set mus
 
 If the instance has a `Name` tag, it is copied onto the AMI as a tag. That is separate from the AMI Name field generated for `create-image --name`.
 
-In AMI mode the script generates the required `create-image --name` value internally from the instance `Name` tag (when present), a UTC `YYYYMMDD-HHMMSS` stamp, and a `-final` suffix — e.g. `web-prod-20260710-204500-final`. That is the AMI Name field, not a `Name` tag, and there is no user `--name` flag.
+In AMI mode the script generates the required `create-image --name` value internally from the instance `Name` tag (when present), a UTC `YYYYMMDD-HHMMSS` stamp, and a `-final` suffix, e.g. `web-prod-20260710-204500-final`. That is the AMI Name field, not a `Name` tag, and there is no user `--name` flag.
 
 Instance correlation also belongs in the description and the JSON report (the instance ID is not part of the AMI name).
 
