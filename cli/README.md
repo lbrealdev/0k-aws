@@ -11,7 +11,7 @@ Install: see [install/](./install/README.md) for AWS CLI v2.
 After install, configure credentials and defaults, then authenticate the way your account expects:
 
 - [configure](./configure.md) — `aws configure list`, import access-key CSV
-- [login](./login.md) — `aws login` / `aws logout`
+- [login](./login.md) — sign in/out (`aws sso login` / `aws sso logout`, stored keys)
 - [SSO](./sso.md) — SSO admin / Identity Center related commands
 - [STS](./sts.md) — caller identity and temporary credentials
 - Broader auth methods: [auth/](../auth/README.md)
@@ -69,7 +69,7 @@ The CLI resolves credentials from several sources, including environment variabl
 |------|----------|
 | [install](./install/README.md) | Install AWS CLI v2 |
 | [configure](./configure.md) | `aws configure` |
-| [login](./login.md) | `aws login` / `aws logout` |
+| [login](./login.md) | `aws sso login` / `aws sso logout` |
 | [sso](./sso.md) | `aws sso` / `aws sso-admin` |
 | [sts](./sts.md) | `aws sts` |
 | [iam](./iam.md) | `aws iam` |
