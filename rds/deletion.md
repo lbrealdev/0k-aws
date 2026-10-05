@@ -1,15 +1,15 @@
-# RDS Instance Deletion
+# Delete an RDS instance
 
-Deleting an RDS instance is a permanent action. Once deleted, the instance and its automated backups are gone. This document covers the considerations you should take before proceeding with the deletion of a manually-created RDS instance.
+Deleting an RDS instance is permanent. Once deleted, the instance and its automated backups are gone unless you keep a manual snapshot. This how-to covers deleting a manually-created RDS instance.
 
-## Pre-Deletion Checklist
+## Pre-deletion checklist
 
-- Check for read replicas — these must be deleted before the primary instance and require `--skip-final-snapshot`
+- Check for read replicas. They must be deleted before the primary instance, and both deletions require `--skip-final-snapshot`:
   ```shell
   aws rds describe-db-instances --db-instance-identifier <INSTANCE_ID> \
     --query 'DBInstances[0].ReadReplicaDBInstanceIdentifiers'
   ```
-- Disable deletion protection if enabled
+- Disable deletion protection if enabled:
   ```shell
   # Check
   aws rds describe-db-instances --db-instance-identifier <INSTANCE_ID> \
@@ -19,7 +19,7 @@ Deleting an RDS instance is a permanent action. Once deleted, the instance and i
   aws rds modify-db-instance --db-instance-identifier <INSTANCE_ID> \
     --no-deletion-protection --apply-immediately
   ```
-- Check if the instance is in a failure state (`failed`, `incompatible-restore`, or `incompatible-network`) — can only delete with `--skip-final-snapshot`
+- Check whether the instance is in a failure state (`failed`, `incompatible-restore`, or `incompatible-network`). Failure states can only be deleted with `--skip-final-snapshot`:
   ```shell
   aws rds describe-db-instances --db-instance-identifier <INSTANCE_ID> \
     --query 'DBInstances[0].DBInstanceStatus'
@@ -27,14 +27,14 @@ Deleting an RDS instance is a permanent action. Once deleted, the instance and i
 
 ## Snapshots
 
-### Manual vs Automated Snapshots
+### Manual vs automated snapshots
 
 - **Automated snapshots** are taken automatically by RDS on a schedule. They are deleted when the instance is deleted.
 - **Manual snapshots** are created explicitly. They persist after the instance is deleted.
 
 When you delete an instance, RDS creates a final manual snapshot by default. You must explicitly pass `--skip-final-snapshot` to skip it. In production, always keep the default behavior (don't skip it).
 
-### Review Existing Snapshots
+### Review existing snapshots
 
 List all snapshots for the instance:
 ```shell
@@ -58,7 +58,7 @@ aws rds describe-db-snapshots --db-instance-identifier <INSTANCE_ID> \
   --output table
 ```
 
-### Create a Final Snapshot
+### Create a final snapshot
 
 ```shell
 aws rds create-db-snapshot \
@@ -71,14 +71,14 @@ Wait for the snapshot to be available before deleting the instance:
 aws rds wait db-snapshot-available --db-snapshot-identifier <SNAPSHOT_NAME>
 ```
 
-### Snapshot Retention
+### Snapshot retention
 
 Manual snapshots persist indefinitely and incur storage costs. Set a reminder to delete them when no longer needed:
 ```shell
 aws rds delete-db-snapshot --db-snapshot-identifier <SNAPSHOT_NAME>
 ```
 
-## Deletion
+## Delete the instance
 
 With a final snapshot (default):
 ```shell
@@ -96,16 +96,22 @@ aws rds delete-db-instance \
   --delete-automated-backups
 ```
 
-## Other Important Observations
+Multi-AZ instances remove both the primary and standby when deleted.
 
-- **Deletion is irreversible.** Unless you have a snapshot to restore from, the data is gone.
-- **Associated resources are not automatically deleted.** Subnet groups, parameter groups, and security groups must be cleaned up separately.
-- **CloudWatch logs and metrics are not deleted with the instance.** These persist and continue to incur costs if not addressed.
-- **Multi-AZ instances** remove both the primary and standby when deleted.
-- **Review manual snapshot storage costs** periodically to avoid unexpected charges from forgotten snapshots.
-- **RDS Custom instances** — deleting an RDS Custom instance permanently deletes the underlying EC2 instance and associated EBS volumes. Do not terminate or delete those resources yourself before deleting the RDS instance. Read replicas and RDS Custom instances require `--skip-final-snapshot`.
+## After you delete
 
-## Related Scripts
+1. Confirm the final snapshot exists before treating the deletion as done:
+```shell
+aws rds describe-db-snapshots --db-snapshot-identifier <SNAPSHOT_NAME> \
+  --query 'DBSnapshots[0].[DBSnapshotIdentifier,Status]' \
+  --output table
+```
+2. Delete associated resources that are not removed automatically: subnet groups, parameter groups, and security groups.
+3. Check CloudWatch logs and metrics for the instance. They persist and continue to incur costs until removed.
+4. For RDS Custom instances, the underlying EC2 instance and its EBS volumes are deleted permanently with the RDS instance. Do not terminate or delete those resources yourself first.
+5. Review manual snapshot storage costs periodically to avoid charges from forgotten snapshots.
+
+## Related scripts
 
 - [`scripts/rds-modify-snapshot.sh`](../scripts/rds-modify-snapshot.sh) — batch-modify RDS DB snapshot option groups (`awsbackup` or `manual` snapshots).
 - [`scripts/rds-snapshot-age.sh`](../scripts/rds-snapshot-age.sh) — read-only age report before cleaning leftover manuals.

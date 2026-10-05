@@ -4,7 +4,7 @@ Operational guides for Amazon RDS.
 
 ## Guides
 
-- [RDS Deletion](./deletion.md) — considerations and checklist for deleting a manually-created RDS instance
+- [Delete an RDS instance](./deletion.md) — how-to for deleting a manually-created RDS instance
 
 ## Related Scripts
 
