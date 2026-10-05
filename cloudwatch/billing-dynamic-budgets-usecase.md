@@ -75,7 +75,7 @@ Budgets are the **control plane** for agreed/computed caps. CloudWatch billing a
 
 In some deployments, CloudWatch billing alarm thresholds may also be updated over time (manually or by automation), which makes them look “wrong” against yesterday’s spend even when the system is behaving as designed.
 
-**Status for this use case doc:** CloudWatch dynamism is an **open question** — confirm whether:
+**Status for this use case doc:** CloudWatch dynamism is an **open question**. Confirm whether:
 
 - alarms are static and only Budgets move, or
 - a job (same or another Lambda) updates alarm thresholds too, or
@@ -83,7 +83,7 @@ In some deployments, CloudWatch billing alarm thresholds may also be updated ove
 
 Until that is confirmed, do not assume CloudWatch CRIT/WARN values are permanent.
 
-## WARN / CRIT policy (illustrative — not a decision record)
+## WARN / CRIT policy (illustrative, not a decision record)
 
 Orgs sometimes label forecast notifications as WARN-style and actual breach as CRIT-style, and later discuss retiring WARN-style signals.
 
@@ -102,20 +102,12 @@ Assessment tooling should always use **live** Budget amounts and metrics for the
 
 ## Implications for analysis tooling
 
-A useful read-only analyzer for this pattern should eventually:
-
-1. Inventory **Budgets** in the management account (names, limits, filters, notification types).
-2. Record **automation** (EventBridge rule schedule + Lambda that mutates budgets).
-3. Inventory **CloudWatch** billing alarms in the management account (`us-east-1`).
-4. Pair each signal to a **member account** (`LinkedAccount` / cost filter / name).
-5. Compare alarm thresholds to **current** budget limits and recent spend — and flag when budgets are known-dynamic so “misconfigured” is not over-claimed.
-
-The existing helper [`scripts/analyze-billing-alarms.py`](./scripts/analyze-billing-alarms.py) focuses on CloudWatch inventory/assess plus Budget **read** as a secondary signal. It does not yet decode the monthly Lambda formula or prove whether CloudWatch thresholds are also automated.
+The existing helper [`scripts/analyze-billing-alarms.py`](./scripts/analyze-billing-alarms.py) inventories and assesses CloudWatch billing alarms, plus a Budget **read** as a secondary signal. It does not decode the monthly Lambda formula, and it does not prove whether CloudWatch thresholds are also automated.
 
 For a single member account, [`scripts/review-account-billing.py`](./scripts/review-account-billing.py) pulls hub CloudWatch + Budgets and target Cost Explorer spend (1/3/6 months + MTD) into a short plain-text NORMAL/ABNORMAL review.
 
 ## Related
 
-- [Billing alarm misconfigurations](./billing-alarm-misconfigurations.md) — MTD / threshold misconceptions and verdict codes
-- [`scripts/README.md`](./scripts/README.md) — CLI for the CloudWatch-oriented analyzer
-- [auth/](../auth/README.md) — SSO profiles for the management account
+- [Billing alarm misconfigurations](./billing-alarm-misconfigurations.md): MTD / threshold misconceptions and verdict codes
+- [`scripts/README.md`](./scripts/README.md): CLI for the CloudWatch-oriented analyzer
+- [auth/](../auth/README.md): SSO profiles for the management account
