@@ -1,13 +1,12 @@
-# Scripts Directory
+# Scripts
 
-This directory contains utility scripts for AWS developer tools.
+Helpers for AWS developer tools services.
 
-## aws-dev-tools-report.sh
-Bash script to generate CSV reports for AWS services (CodeCommit, CodeArtifact, CodeBuild, CodeDeploy, CodePipeline). Checks permissions, organizes outputs in timestamped directories, and handles errors gracefully.
+Convention: prefer **read-only** helpers for inventory/discovery. Write helpers should support `--dry-run` where practical and make side effects obvious.
 
-Usage: `./aws-dev-tools-report.sh`
+| Script | Mode | Purpose |
+|--------|------|---------|
+| [`aws-dev-tools-report.sh`](./aws-dev-tools-report.sh) | Read-only | CSV reports for CodeCommit, CodeArtifact, CodeBuild, CodeDeploy, CodePipeline; timestamped output directories |
+| [`csv_to_xlsx.py`](./csv_to_xlsx.py) | Local | Convert generated CSVs into a single XLSX file with multiple worksheets |
 
-## csv_to_xlsx.py
-Python script to convert generated CSV files into a single XLSX file with multiple worksheets.
-
-Usage: `uv run csv_to_xlsx.py <report_directory>`
+Usage: `./aws-dev-tools-report.sh` and `uv run csv_to_xlsx.py <report_directory>`
