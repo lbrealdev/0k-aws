@@ -1,6 +1,6 @@
 # CodeArtifact
 
-Get a temporary authorization token to access CodeArtifact repositories by passing a query by `authorizationToken` with a text output:
+Print a temporary authorization token:
 ```shell
 aws codeartifact get-authorization-token --domain <domain>  --domain-owner <owner-account> --duration-seconds 20000 --query "authorizationToken" --output text
 ```
@@ -34,6 +34,6 @@ List packages in the repository:
 aws codeartifact list-packages --domain <domain> --repository <repository-name>
 ```
 
-#### Sources
+### Sources
 
 - [Upstream repository priority order](https://docs.aws.amazon.com/codeartifact/latest/ug/repo-upstream-search-order.html)

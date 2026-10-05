@@ -1,6 +1,6 @@
 # EC2 AMI
 
-List all AMIs by filtering by name and sort the query by the creation date of all images.:
+List AMI names by pattern, newest first:
 ```shell
 aws ec2 describe-images \
   --filters "Name=name,Values=<ami-name-*>" \
@@ -16,7 +16,7 @@ aws ec2 describe-images \
   --output table
 ```
 
-List all AMIs by filtering by name, passing query in table format output with some AMI properties.
+List AMI properties by pattern (table, newest first):
 ```shell
 aws ec2 describe-images \
   --filters "Name=name,Values=<ami-name-*>" \

@@ -1,6 +1,6 @@
 # EC2 Snapshots
 
-List all snapshots filtering by owner id and snapshot status passing query by snapshot id and tag key:
+List completed snapshots you own (ID and Name tag):
 ```shell
 aws ec2 describe-snapshots \
   --filters "Name=status,Values=completed" \
