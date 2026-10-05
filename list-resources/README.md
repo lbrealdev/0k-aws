@@ -6,7 +6,6 @@ Approaches and tools for discovering resources across an AWS account.
 
 - [AWS Config](./config.md) — inventory via AWS Config
 - [Cloud Control API](./cloud-control-api.md) — list resources with Cloud Control
-- [AWS CDK](./cdk.md) — CDK-related resource listing notes
 - [Steampipe](./tools/steampipe.md) — query AWS with Steampipe
 
 ## Related scripts
