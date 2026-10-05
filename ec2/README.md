@@ -5,8 +5,9 @@ Operational guides and good practices for day-to-day Amazon EC2 work — invento
 ## Guides
 
 - [Manual / final snapshots](./manual-snapshots.md) — when and how to take intentional EBS snapshots before risky changes
-- [EC2 Elimination](./elimination.md) — inventory, snapshots, AMIs, backups, and checklist for removing EC2 resources safely
-  - Includes [Investigate recovery points](./elimination.md#investigate-recovery-points-before-adding-a-backup-filter) before adding any Backup filter
+- [Eliminate EC2 instances](./elimination.md) — inventory, backups, and termination checklist for removing EC2 resources safely
+  - [Why EC2 elimination matters](./elimination-explanation.md) — resource map and backup trade-offs
+  - [AWS Backup recovery points](./backup-recovery-points.md) — recovery-point filter reference
 - [Windows on EC2](./windows/README.md) — patch state on Windows Server instances
   - [Updates](./windows/updates.md) — installed KBs, pending updates, pending reboot
 
