@@ -1,6 +1,6 @@
 # Scripts
 
-Helper scripts for common AWS operational tasks.
+Helper scripts for common AWS operational tasks. Scripting contract (shell and Python): [AGENTS.md](../AGENTS.md) — Scripts section.
 
 Convention: prefer **read-only** helpers for inventory/discovery. Write helpers should support `--dry-run` where practical and make side effects obvious.
 

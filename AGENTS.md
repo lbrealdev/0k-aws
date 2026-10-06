@@ -1,64 +1,95 @@
-# 0k-aws — Development Guide
+# 0k-aws — Agent Contract
 
-## Git Conventions
+## Purpose
 
-- Branch from `main`; do not commit or push directly to `main`
-- Use [Conventional Commits](https://www.conventionalcommits.org/), for example `docs(auth):`, `fix(scripts):`, `feat(scripts):`
-- Keep commits focused; one logical change per commit when practical
+Personal AWS notes and helper scripts from day-to-day practical experience: procedures that work, and how AWS behaves in practice.
 
-## Code Standards
+For coding agents and humans adding guides or helpers to this repo. Out of scope: a general AWS textbook, product marketing, or unrelated cloud platforms.
 
-### Scripts
+## Scripts
 
-- Use `#!/bin/bash` and `set -euo pipefail` (some older helpers use `#!/usr/bin/env bash`; new scripts should follow this file)
-- Every `*.sh` must support `--help` / `-h` (print usage and exit 0)
-- `--help` / usage text must not list dependencies; check tools at runtime instead
-- Prefer read-only helpers for inventory and discovery
-- Write scripts should support `--dry-run` where practical and make side effects obvious
-- For AWS CLI scripts, prefer explicit `--profile` / `--region` over relying on shell defaults
-- Quote every expansion passed to `aws`, `jq`, and `printf`; prefer `"${array[@]}"` over unquoted extras
-- Errors and usage go to stderr; data/tables go to stdout so the output can be piped
-- Check `command -v aws` (and `jq` when used) before the first AWS call; fail with a clear message
-- When a script takes a named `--profile`, refuse `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` if those would override the profile (boto3 and some CLI chains honor env first)
+Contract for shell and Python helpers. Follow it for every new script.
 
-### Argument parsing
+### Scope
 
-- `while [[ $# -gt 0 ]]; do case $1 in ... esac; done` then `main` (see `auth/scripts/aws-sso-check.sh`)
-- Unknown flags: print error + usage to stderr, exit 1
-- Mutually exclusive flags should be rejected explicitly, not silently ignored
-- Keep `--help` line width at 80 columns or less
+Applies to `*.sh` and Python. Python helpers that need third-party deps (including `boto3` for AWS) must be [uv inline scripts](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies) (PEP 723).
 
-### Printing and logging
+Put shared/cross-area helpers under root `scripts/`. Put area-specific helpers under that area’s `scripts/` (e.g. `auth/scripts/`). Add new scripts next to related work; index them as described under Docs.
 
-Config paths, profile names, and other caller/config-derived strings are untrusted for terminal output.
+### Shell baseline
 
-- Do not `echo -e` (or `echo -en`) with those strings: `\n`, `\e`, `\c` and friends are interpreted even when the expansion is quoted
-- Emit data with `printf '%s'` (or `printf '%s\n'`)
-- If a line mixes trusted color tokens (`\e[32m`) with data, encode the data first so it cannot form those tokens. Doubling backslashes is not enough (`\e[31m` still matches inside `\\e`)
-- Encoding must be reversible for **any** byte, including ASCII SUB (`0x1a`). Escape existing sentinels before replacing `\`; decode in the reverse pair order. Width math must use the decoded visible string
-- Color only when stdout is a TTY (`[ -t 1 ]`); piped output stays pure text
-- Mask secrets (`AWS_SECRET_ACCESS_KEY`, session tokens): never print them in full
+- New shell scripts use `#!/bin/bash` and `set -euo pipefail`.
+- Check required tools at runtime with `command -v` before first use; fail clearly on stderr with exit 2.
+- Never list dependencies in `--help`.
 
-The working example is `_esc_data` / `_unesc_data` / `_render` in `auth/scripts/aws-sso-check.sh`. Regression probe: `tests/aws-sso-check-render.sh`.
+### Help / CLI
 
-### Testing
+- Every script supports `--help` / `-h` by default.
+- No arguments → short usage plus `Try --help` (or equivalent) on stderr, exit 2. No `[ERROR]` prefix, no full help dump.
+- Unknown flags follow the same path: short usage plus `Try --help` (or equivalent) on stderr, exit 2. No `[ERROR]` prefix, no full help dump.
+- `-h` / `--help` → lean help on stdout, exit 0: **Usage**, brief purpose, **Options** only. No Exit or Examples blocks.
 
-There is no CI workflow yet. Before opening a PR that touches scripts:
+### Auth
 
-- `bash -n path/to/script.sh`
-- `shellcheck path/to/script.sh` when `shellcheck` is on `PATH` (zero findings)
-- `python3 -m py_compile path/to/script.py` for Python helpers
-- For `aws-sso-check.sh` rendering changes: `tests/aws-sso-check-render.sh` (TTY and non-TTY; includes a `0x1a` path/profile)
-- Scripts whose source is grepped for non-ASCII (token-safe renderers) must stay `LC_ALL=C grep -nP '[^\x00-\x7F]'`-clean
+Support AWS SSO (primary) and environment credentials — caller’s choice.
 
-### Docs
+- Prefer explicit `--profile` / `--region` when the script uses named profiles.
+- If the script exposes `--profile`, refuse when `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, or `AWS_SESSION_TOKEN` is set (they override the profile). Document that only in the script’s entry in `scripts/README.md` or the area `scripts/README.md` — never in `--help`.
+- If neither a usable profile nor env credentials are available, fail clearly on stderr with exit 2.
 
-- Each top-level area has a `README.md` index; new guides and scripts get a row or bullet there
-- Executable helpers also belong in `scripts/README.md` (or the area's `scripts/README.md`) with **read-only** vs **write**
-- Do not put credentials, account IDs from real engagements, or live dollar amounts in docs; sanitize examples
+### Exits
 
-### Python
+| Code | Meaning |
+|------|---------|
+| 0 | Success / found |
+| 1 | Not found / nothing to do / zero SSO profiles |
+| 2 | Usage error or hard failure (missing deps / auth / AWS call failed) |
 
-- Prefer a uv [inline script](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies) (PEP 723) when third-party deps are required (`boto3`)
-- `--help` via argparse; exit 0 on help, 1 on usage, 2 on AWS errors (match `cloudwatch/scripts/` when adding there)
-- Do not log credentials or full session tokens; named profiles over implicit env
+If a script uses different codes, document them in that script’s `scripts/README.md` (or area scripts README) entry.
+
+### Output
+
+- Data and tables on stdout; logs and errors on stderr.
+- Default lean logging: `[INFO]`, `[WARN]`, `[ERROR]`.
+- No banners or colors unless the script’s job truly needs richer TTY UI.
+
+### Safety
+
+- Prefer read-only inventory and discovery helpers.
+- Write helpers support `--dry-run` where practical; make side effects obvious before they run.
+
+### Reference rule
+
+New helpers must follow this Scripts contract (help, auth, exits, output, uv). Prefer the pattern of a newer script that already matches the contract over older ones that do not. Do not treat any single file path as a permanent golden template.
+
+### Check before PR
+
+- `bash -n` on touched shell scripts
+- `shellcheck` when available (zero findings)
+- `python3 -m py_compile` for Python helpers
+
+## Docs
+
+Documentation contract for guides and script notes — not a folder inventory.
+
+### How to document
+
+Write in a practical tone: prerequisites, SSO/profile/region, the command to run, and a common failure. When a procedure and its script both change, update the docs in the same PR.
+
+### What an area should cover
+
+Enough for someone to run the procedure safely: context, inputs (profile, region, resource ids), steps, expected outcome, and how to recover or stop if something fails. Do not dump every AWS API surface for the service.
+
+### Indexing
+
+New guides and scripts get an entry in the area `README.md` and in `scripts/README.md` (or the area’s `scripts/README.md`), marked **read-only** vs **write**.
+
+### Secrets in docs
+
+Never document real credentials, engagement account IDs, or live dollar amounts. Sanitize examples.
+
+## Git
+
+- Branch from `main`; do not commit or push directly to `main`.
+- Use [Conventional Commits](https://www.conventionalcommits.org/) (e.g. `feat(scripts):`, `docs(auth):`).
+- Never commit keys, `.env` files, credential dumps, or session tokens.
