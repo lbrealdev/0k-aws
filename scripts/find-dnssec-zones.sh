@@ -10,11 +10,9 @@ AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
 R53_REGION="us-east-1"
 AWS_ENV_VARS=(AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN)
 
-SHOW_ALL=0
 PROFILES=()
 HITS=()
 FOUND=0
-ZONES=0
 SCANNED=0
 SKIPPED=0
 
@@ -24,10 +22,9 @@ Usage: $0 [OPTIONS]
        $0 --check
 
 Find Route 53 public hosted zones with DNSSEC signing across AWS SSO
-profiles. By default only zones whose status is not NOT_SIGNING are shown.
+profiles. Only zones whose status is not NOT_SIGNING are shown.
 
 Options:
-  --all, -a          Show every public zone with its DNSSEC status
   --profile, -p NAME Limit to this profile
   --profiles LIST    Comma-separated profiles
   --check            Validate SSO profiles in ~/.aws/config
@@ -128,7 +125,8 @@ refuse_env_credentials() {
 discover_sso_profiles() {
     local config="$1"
     [[ -f "$config" ]] || return 0
-    awk '
+    # Git Bash / Windows may leave CRLF in ~/.aws/config
+    tr -d '\r' < "$config" | awk '
         /^\[profile / {
             emit()
             name = $0
@@ -156,7 +154,7 @@ discover_sso_profiles() {
         function emit() {
             if (name != "" && sso) print name
         }
-    ' "$config"
+    '
 }
 
 # Count SSO profiles in the real AWS config (no AWS API calls).
@@ -181,10 +179,6 @@ parse_args() {
                 ;;
             --check)
                 check
-                ;;
-            --all|-a)
-                SHOW_ALL=1
-                shift
                 ;;
             --profile|--profile=*|-p|-p=*)
                 if [[ "$1" == --profile=* || "$1" == -p=* ]]; then
@@ -229,7 +223,6 @@ parse_args() {
     done
 }
 
-# aws.exe in Git Bash ends lines with CRLF; strip \r from text output.
 sts_account() {
     local profile="$1"
     aws sts get-caller-identity \
@@ -237,7 +230,8 @@ sts_account() {
         --region "$R53_REGION" \
         --query Account \
         --output text \
-        --no-cli-pager 2>/dev/null | tr -d '\r'
+        --no-cli-pager \
+        </dev/null 2>/dev/null | tr -d '\r'
 }
 
 # Print ZONE_ID<TAB>NAME for each public hosted zone (CLI paginates).
@@ -249,7 +243,11 @@ list_public_zones() {
         --region "$R53_REGION" \
         --query 'HostedZones[?Config.PrivateZone==`false`].[Id,Name]' \
         --output text \
-        --no-cli-pager | tr -d '\r'
+        --no-cli-pager \
+        </dev/null 2>/dev/null | tr -d '\r' || {
+        warn "route53 list-hosted-zones failed for profile '$profile'"
+        return 0
+    }
 }
 
 dnssec_status() {
@@ -261,33 +259,39 @@ dnssec_status() {
         --hosted-zone-id "$zone_id" \
         --query 'Status.ServeSignature' \
         --output text \
-        --no-cli-pager 2>/dev/null | tr -d '\r'
+        --no-cli-pager \
+        </dev/null 2>/dev/null | tr -d '\r'
 }
 
-scan_profile() {
-    local account="$1"
-    local profile="$2"
+# Print ZONE<TAB>ZONE_ID<TAB>DNSSEC for public zones that are not NOT_SIGNING.
+search_dnssec() {
+    local profile="$1"
     local rows id name status
-    if ! rows=$(list_public_zones "$profile" 2>/dev/null); then
-        warn "route53 list-hosted-zones failed for profile '$profile'"
-        return 0
-    fi
+    rows=$(list_public_zones "$profile")
     [[ -z "$rows" ]] && return 0
     while IFS=$'\t' read -r id name; do
         [[ -z "${id:-}" ]] && continue
         id="${id##*/}"
         name="${name%.}"
-        ZONES=$((ZONES + 1))
         if ! status=$(dnssec_status "$profile" "$id"); then
             warn "route53 get-dnssec failed for zone '$id' in '$profile'"
-            status="UNKNOWN"
-        fi
-        if [[ "$status" != "NOT_SIGNING" ]]; then
-            FOUND=$((FOUND + 1))
-        elif [[ "$SHOW_ALL" -eq 0 ]]; then
             continue
         fi
+        [[ "$status" == "NOT_SIGNING" ]] && continue
+        printf '%s\t%s\t%s\n' "$name" "$id" "$status"
+    done <<< "$rows"
+}
+
+collect_hits() {
+    local account="$1"
+    local profile="$2"
+    local rows="$3"
+    [[ -z "$rows" ]] && return 0
+    local name id status rest
+    while IFS=$'\t' read -r name id status rest; do
+        [[ -z "${name:-}" ]] && continue
         HITS+=("${account}"$'\t'"${profile}"$'\t'"${name}"$'\t'"${id}"$'\t'"${status}")
+        FOUND=$((FOUND + 1))
     done <<< "$rows"
 }
 
@@ -305,7 +309,7 @@ main() {
         exit 1
     fi
 
-    local profile account
+    local profile account rows
     for profile in "${PROFILES[@]}"; do
         if ! account=$(sts_account "$profile"); then
             warn "skip '$profile' (not logged in; aws sso login --profile $profile)"
@@ -313,7 +317,8 @@ main() {
             continue
         fi
         SCANNED=$((SCANNED + 1))
-        scan_profile "$account" "$profile"
+        rows=$(search_dnssec "$profile")
+        collect_hits "$account" "$profile" "$rows"
     done
 
     if [[ "$SCANNED" -eq 0 ]]; then
@@ -328,7 +333,7 @@ main() {
         info "no matches"
     fi
     echo ""
-    info "scanned=$SCANNED skipped=$SKIPPED zones=$ZONES dnssec=$FOUND"
+    info "scanned=$SCANNED skipped=$SKIPPED matches=$FOUND"
     [[ "$FOUND" -gt 0 ]]
 }
 
