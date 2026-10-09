@@ -41,20 +41,28 @@ else
 fi
 
 for p in "${profiles[@]}"; do
+    printf '%s...' "$p" >&2
     if ! account=$(awsq sts get-caller-identity --profile "$p" \
             --query Account 2> /dev/null) || [[ -z "$account" ]]; then
+        echo >&2
         echo "skip $p (aws sso login --profile $p)" >&2
         continue
     fi
     # shellcheck disable=SC2016  # JMESPath backtick literal
-    zones=$(awsq route53 list-hosted-zones --profile "$p" \
-        --query 'HostedZones[?Config.PrivateZone==`false`].[Id,Name]') || continue
+    if ! zones=$(awsq route53 list-hosted-zones --profile "$p" \
+        --query 'HostedZones[?Config.PrivateZone==`false`].[Id,Name]'); then
+        printf ' failed\n' >&2
+        continue
+    fi
+    n=0
     while IFS=$'\t' read -r id name; do
         [[ -n "$id" ]] || continue
         id=${id##*/}
         status=$(awsq route53 get-dnssec --profile "$p" --hosted-zone-id "$id" \
             --query Status.ServeSignature 2> /dev/null) || status=UNKNOWN
+        n=$((n + 1))
         [[ "$status" == NOT_SIGNING && "$SHOW_ALL" -eq 0 ]] && continue
         printf '%s\t%s\t%s\t%s\t%s\n' "$account" "$p" "${name%.}" "$id" "$status"
     done <<< "$zones"
+    printf ' %d zones\n' "$n" >&2
 done
