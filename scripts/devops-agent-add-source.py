@@ -161,7 +161,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             f"--target PROFILE [--target PROFILE ...] "
             f"[--region REGION] [--dry-run]"
         ),
-        description="Add AWS accounts as secondary sources via SSO profiles.",
+        description=(
+            "Add AWS accounts as secondary sources to an AWS DevOps Agent "
+            "space via SSO profiles."
+        ),
         formatter_class=HelpFormatter,
         add_help=False,
     )
