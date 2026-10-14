@@ -19,7 +19,8 @@ whether repeated calls keep multiple sourceAws associations is untested here.
 Python (uv + boto3) rather than bash: trust-policy JSON and idempotent IAM
 are simpler in Python.
 
-Exit codes (AGENTS.md): 0 success/help, 1 usage, 2 AWS error.
+Exit codes: 0 success/help; 2 usage (argparse default / no-args /
+unknown flags) or AWS error. See AGENTS.md and find-iam-role.sh.
 """
 
 from __future__ import annotations
@@ -51,15 +52,6 @@ AWS_CONFIG_FILE = Path(
 )
 
 
-class ArgumentParser(argparse.ArgumentParser):
-    """Usage errors exit 1 (AGENTS.md Python / cloudwatch scripts)."""
-
-    def error(self, message: str) -> None:
-        self.print_usage(sys.stderr)
-        print(f"Error: {message}", file=sys.stderr)
-        raise SystemExit(1)
-
-
 def log(msg: str) -> None:
     print(f"[INFO]  {msg}", file=sys.stderr)
 
@@ -72,7 +64,7 @@ def err(msg: str) -> None:
     print(f"[ERROR] {msg}", file=sys.stderr)
 
 
-def die(msg: str, code: int = 1) -> None:
+def die(msg: str, code: int = 2) -> None:
     err(msg)
     raise SystemExit(code)
 
@@ -80,11 +72,12 @@ def die(msg: str, code: int = 1) -> None:
 def reject_env_credentials() -> None:
     present = [name for name in ENV_CREDENTIAL_VARS if os.environ.get(name)]
     if present:
-        die("SSO profiles only; unset: " + " ".join(present), 1)
+        die("SSO profiles only; unset: " + " ".join(present)")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = ArgumentParser(
+    # Stock argparse: --help → 0; bad usage / unknown flags → 2.
+    p = argparse.ArgumentParser(
         prog=SCRIPT_NAME,
         description=(
             "Ensure the DevOps Agent cross-account role in each secondary "
