@@ -72,7 +72,7 @@ def die(msg: str, code: int = 2) -> None:
 def reject_env_credentials() -> None:
     present = [name for name in ENV_CREDENTIAL_VARS if os.environ.get(name)]
     if present:
-        die("SSO profiles only; unset: " + " ".join(present)")
+        die("SSO profiles only; unset: " + " ".join(present))
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
