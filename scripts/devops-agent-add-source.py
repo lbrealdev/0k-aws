@@ -12,12 +12,14 @@ account is reached via its SSO profile (sso_account_id in ~/.aws/config),
 same discovery idea as find-iam-role.sh.
 
 Per target: ensure cross-account IAM role (trust + AIDevOpsAgentAccessPolicy),
-then associate from primary via devops-agent associate_service.
+then associate from primary via devops-agent associate_service (serviceId aws,
+sourceAws). Official CLI onboarding uses service-id aws for secondary sources;
+whether repeated calls keep multiple sourceAws associations is untested here.
 
 Python (uv + boto3) rather than bash: trust-policy JSON and idempotent IAM
 are simpler in Python.
 
-Exit codes: 0 success, 2 usage / AWS error.
+Exit codes (AGENTS.md): 0 success/help, 1 usage, 2 AWS error.
 """
 
 from __future__ import annotations
@@ -43,9 +45,19 @@ ACCOUNT_ID_RE = re.compile(r"^\d{12}$")
 MANAGED_POLICY_ARN = "arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy"
 DEFAULT_ROLE_NAME = "DevOpsAgentCrossAccountRole"
 SERVICE_PRINCIPAL = "aidevops.amazonaws.com"
+# Agent Space control plane is regional; see Supported Regions in the user guide.
 AWS_CONFIG_FILE = Path(
     os.environ.get("AWS_CONFIG_FILE", Path.home() / ".aws" / "config")
 )
+
+
+class ArgumentParser(argparse.ArgumentParser):
+    """Usage errors exit 1 (AGENTS.md Python / cloudwatch scripts)."""
+
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        print(f"Error: {message}", file=sys.stderr)
+        raise SystemExit(1)
 
 
 def log(msg: str) -> None:
@@ -60,7 +72,7 @@ def err(msg: str) -> None:
     print(f"[ERROR] {msg}", file=sys.stderr)
 
 
-def die(msg: str, code: int = 2) -> None:
+def die(msg: str, code: int = 1) -> None:
     err(msg)
     raise SystemExit(code)
 
@@ -68,11 +80,11 @@ def die(msg: str, code: int = 2) -> None:
 def reject_env_credentials() -> None:
     present = [name for name in ENV_CREDENTIAL_VARS if os.environ.get(name)]
     if present:
-        die("SSO profiles only; unset: " + " ".join(present))
+        die("SSO profiles only; unset: " + " ".join(present), 1)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
+    p = ArgumentParser(
         prog=SCRIPT_NAME,
         description=(
             "Ensure the DevOps Agent cross-account role in each secondary "
@@ -82,23 +94,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            f"  {SCRIPT_NAME} --space-id SPACE --role-name ROLE \\\n"
+            f"  {SCRIPT_NAME} --agent-space-id SPACE --role-name ROLE \\\n"
             "    --profile primary --region us-east-1 --dry-run 111122223333\n"
-            f"  {SCRIPT_NAME} --space-id SPACE --role-name ROLE \\\n"
+            f"  {SCRIPT_NAME} --agent-space-id SPACE --role-name ROLE \\\n"
             "    --profile primary --region us-east-1 --ou-id ou-xxxx --dry-run\n"
+            "\n"
+            "Region must be a DevOps Agent Supported Region for the Agent Space.\n"
         ),
     )
     p.add_argument(
-        "--space-id",
+        "--agent-space-id",
         "-s",
         required=True,
-        help="Existing Agent Space ID (primary account)",
+        dest="agent_space_id",
+        help="Existing Agent Space ID (maps to associate-service --agent-space-id)",
     )
     p.add_argument(
         "--role-name",
         "-r",
         default=DEFAULT_ROLE_NAME,
-        help=f"IAM role name in each secondary account (default: {DEFAULT_ROLE_NAME})",
+        help=(
+            "IAM role name in each secondary account; used to build "
+            f"assumableRoleArn (default: {DEFAULT_ROLE_NAME})"
+        ),
     )
     p.add_argument(
         "--profile",
@@ -109,7 +127,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--region",
         required=True,
-        help="Agent Space region (also used in trust SourceArn)",
+        help=(
+            "Agent Space region (required; DevOps Agent is not available in "
+            "every region — see Supported Regions)"
+        ),
     )
     p.add_argument(
         "--ou-id",
@@ -130,12 +151,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--external-id",
-        help="Optional external ID for sourceAws association",
+        help="Optional externalId for sourceAws association",
     )
     p.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print IAM and associate-service write calls; change nothing",
+        help="Print IAM, associate-service, and list-associations calls; change nothing",
     )
     return p.parse_args(argv)
 
@@ -157,7 +178,6 @@ def discover_sso_account_profiles(config_path: Path) -> dict[str, str]:
     def emit() -> None:
         nonlocal name, sso, account_id
         if name and sso and ACCOUNT_ID_RE.match(account_id):
-            # First profile wins if duplicates
             mapping.setdefault(account_id, name)
         name = ""
         sso = False
@@ -257,24 +277,79 @@ def print_cmd(parts: list[str]) -> None:
     print(" ".join(parts))
 
 
-def list_associated_account_ids(devops: Any, space_id: str) -> set[str]:
-    ids: set[str] = set()
+def iter_associations(devops: Any, space_id: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     token: str | None = None
     while True:
         kwargs: dict[str, Any] = {"agentSpaceId": space_id}
         if token:
             kwargs["nextToken"] = token
         resp = devops.list_associations(**kwargs)
-        for assoc in resp.get("associations") or []:
-            cfg = assoc.get("configuration") or {}
-            for key in ("sourceAws", "aws"):
-                acct = (cfg.get(key) or {}).get("accountId")
-                if acct:
-                    ids.add(acct)
+        out.extend(resp.get("associations") or [])
         token = resp.get("nextToken")
         if not token:
             break
+    return out
+
+
+def list_associated_account_ids(devops: Any, space_id: str) -> set[str]:
+    ids: set[str] = set()
+    for assoc in iter_associations(devops, space_id):
+        cfg = assoc.get("configuration") or {}
+        for key in ("sourceAws", "aws"):
+            acct = (cfg.get(key) or {}).get("accountId")
+            if acct:
+                ids.add(acct)
     return ids
+
+
+def print_association_summary(associations: list[dict[str, Any]]) -> None:
+    """Stdout: ASSOCIATION_ID\\tSERVICE_ID\\tACCOUNT\\tACCOUNT_TYPE\\tSTATUS."""
+    print("# associations", file=sys.stderr)
+    for assoc in associations:
+        cfg = assoc.get("configuration") or {}
+        account = ""
+        account_type = ""
+        if "sourceAws" in cfg and cfg["sourceAws"]:
+            account = cfg["sourceAws"].get("accountId") or ""
+            account_type = cfg["sourceAws"].get("accountType") or "source"
+        elif "aws" in cfg and cfg["aws"]:
+            account = cfg["aws"].get("accountId") or ""
+            account_type = cfg["aws"].get("accountType") or "monitor"
+        print(
+            f"{assoc.get('associationId', '')}\t"
+            f"{assoc.get('serviceId', '')}\t"
+            f"{account}\t{account_type}\t"
+            f"{assoc.get('status', '')}"
+        )
+
+
+def verify_list_associations(
+    *,
+    devops: Any,
+    space_id: str,
+    region: str,
+    profile: str,
+    dry_run: bool,
+) -> None:
+    """List associations after associate (or print the planned check)."""
+    if dry_run:
+        print_cmd(
+            [
+                "aws",
+                "devops-agent",
+                "list-associations",
+                "--agent-space-id",
+                shell_quote(space_id),
+                "--profile",
+                shell_quote(profile),
+                "--region",
+                shell_quote(region),
+            ]
+        )
+        return
+    associations = iter_associations(devops, space_id)
+    print_association_summary(associations)
 
 
 def list_ou_account_ids(org: Any, ou_id: str) -> list[str]:
@@ -406,6 +481,9 @@ def associate_source(
     profile: str,
     dry_run: bool,
 ) -> tuple[str, str] | None:
+    # Official CLI onboarding uses service-id aws + sourceAws for secondary
+    # accounts. Docs also say associate-service "overwrites the existing
+    # association of the same service" — multi-account retention untested.
     source: dict[str, Any] = {
         "accountId": account_id,
         "accountType": "source",
@@ -513,27 +591,29 @@ def main(argv: list[str] | None = None) -> int:
         if sts_account(args.profile) is None:
             die(
                 f"primary profile '{args.profile}' not logged in; "
-                f"aws sso login --profile {args.profile}"
+                f"aws sso login --profile {args.profile}",
+                2,
             )
 
         primary = session_for_profile(args.profile, args.region)
         primary_acct = primary.client("sts").get_caller_identity()["Account"]
         devops = primary.client("devops-agent", region_name=args.region)
         org = primary.client("organizations") if args.ou_id else None
+        space_id = args.agent_space_id
 
         targets = collect_account_ids(
             accounts=list(args.accounts),
             ou_id=args.ou_id,
             org=org,
             devops=devops,
-            space_id=args.space_id,
+            space_id=space_id,
         )
         if not targets:
             die("no accounts to associate")
 
-        trust = trust_document(primary_acct, args.region, args.space_id)
+        trust = trust_document(primary_acct, args.region, space_id)
         log(
-            f"primary={primary_acct} space={args.space_id} "
+            f"primary={primary_acct} space={space_id} "
             f"targets={len(targets)} dry_run={args.dry_run}"
         )
 
@@ -581,7 +661,7 @@ def main(argv: list[str] | None = None) -> int:
 
                 result = associate_source(
                     devops=devops,
-                    space_id=args.space_id,
+                    space_id=space_id,
                     account_id=account_id,
                     role_arn=role_arn,
                     external_id=args.external_id,
@@ -597,10 +677,24 @@ def main(argv: list[str] | None = None) -> int:
                 aws_failed = True
 
         log(f"scanned={scanned} skipped={skipped}")
-        if args.dry_run:
-            log("dry run: nothing changed")
+
         if scanned == 0:
             die("no reachable SSO profiles for target accounts")
+
+        try:
+            verify_list_associations(
+                devops=devops,
+                space_id=space_id,
+                region=args.region,
+                profile=args.profile,
+                dry_run=args.dry_run,
+            )
+        except (ClientError, BotoCoreError) as exc:
+            err(f"list-associations failed: {exc}")
+            aws_failed = True
+
+        if args.dry_run:
+            log("dry run: nothing changed")
         return 2 if aws_failed else 0
     except (ClientError, BotoCoreError) as exc:
         err(str(exc))
