@@ -12,6 +12,42 @@ in a **source** account.
 Create the setup with the vendor CLI onboarding guide (see References). This
 repo’s helper only associates additional target accounts.
 
+## SSO profiles
+
+Use named SSO profiles. The script calls `boto3.Session(profile_name=…)` and
+resolves the account ID only with `sts:GetCallerIdentity` (no config scan).
+
+Modern `~/.aws/config` shape (generic example):
+
+```ini
+[sso-session my-sso]
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+sso_registration_scopes = sso:account:access
+
+[profile source-acct]
+sso_session = my-sso
+sso_account_id = 111122223333
+sso_role_name = AdministratorAccess
+region = us-east-1
+
+[profile target-acct]
+sso_session = my-sso
+sso_account_id = 444455556666
+sso_role_name = AdministratorAccess
+region = us-east-1
+```
+
+Log in before running:
+
+```bash
+aws sso login --profile source-acct
+aws sso login --profile target-acct
+```
+
+If the SSO token is missing or expired, the script fails and tells you to run
+`aws sso login --profile NAME`.
+
 ## Prerequisites
 
 **Source account (`--source-profile`):**
@@ -38,7 +74,7 @@ repo’s helper only associates additional target accounts.
 - The script **verifies** these; it does **not** create or modify IAM. Fix
   gaps in the target account first, then re-run.
 
-`--ou-id` is **not** supported: listing OU members cannot map to SSO profiles
+`--ou-id` is not supported: listing OU members cannot map to SSO profiles
 without scanning `~/.aws/config`. Pass one `--target-profile` per target.
 
 ## Manual role setup (target account)
@@ -77,7 +113,7 @@ aws iam attach-role-policy --role-name DevOpsAgentCrossAccountRole \
 (Python + boto3).
 
 **Usual flags:** `--setup-id`, `--source-profile`, `--region`, one or more
-`--target-profile`, optional `--dry-run`.
+`--target-profile`, optional `--dry-run`, optional `-q` / `--quiet`.
 
 **Advanced** (accepted; pointed from `--help`):
 
@@ -100,14 +136,35 @@ aws iam attach-role-policy --role-name DevOpsAgentCrossAccountRole \
 # Apply: drop --dry-run
 ```
 
+### Output
+
+- **stderr:** one-line header, then `[ok]` / `[warn]` / `[fail]` / `[skip]` /
+  `[dry-run]` status rows, then a `summary` with
+  `associated` / `skipped` / `failed` counts. Color only when stderr is a TTY
+  and `NO_COLOR` is unset. Profile names and other interpolated values are
+  escaped for safe terminal rendering.
+- **stdout:** machine-useful rows only (association `ACCOUNT_ID`, id, status;
+  under `--dry-run`, the planned CLI commands).
+- `-q` / `--quiet`: hide header and non-error status on stderr; errors still
+  print.
+
+### Flow and safeguards
+
 One run: verify each target role → associate → retention check (fail if a
 prior associated account disappears; poll briefly for the new one) → final
-list-associations. Missing `iam:PassRole` fails immediately. `--dry-run`
-prints associate/list commands only (still requires SSO for STS and IAM
-reads).
+list. Missing `iam:PassRole` fails immediately (no long retry). `--dry-run`
+prints associate/list commands on stdout and writes nothing (SSO still needed
+for STS and IAM reads).
 
-Exit codes ([AGENTS.md](../AGENTS.md)): `0` help/success, `1` usage, `2` AWS
-error. Env access keys refused. Requires [`uv`](https://docs.astral.sh/uv/).
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Usage (bad args / unknown flags / env credentials set) |
+| 2 | Verification, precondition, or AWS failure |
+
+Requires [`uv`](https://docs.astral.sh/uv/).
 
 ## Multi-account caveat
 
