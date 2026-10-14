@@ -8,7 +8,7 @@ A personal wiki of AWS knowledge: CLI cheat sheets, operational guides, and help
 | [cli/](./cli/README.md) | AWS CLI v2 install, profile/region/pager nuances, one page per `aws` subcommand |
 | [cloudshell/](./cloudshell/README.md) | Persistent tooling (mise, just) in the CloudShell environment |
 | [cloudwatch/](./cloudwatch/README.md) | Billing alarm analysis and CloudWatch helpers |
-| [devops-agent/](./devops-agent/README.md) | AWS DevOps Agent: Agent Spaces, primary and secondary sources |
+| [secondary-source/](./secondary-source/README.md) | Associate target accounts as secondary sources on an existing setup |
 | [ec2/](./ec2/README.md) | Inventory, manual/final snapshots, safe elimination, Windows patch-state checks |
 | [rds/](./rds/README.md) | RDS deletion how-to |
 | [list-resources/](./list-resources/README.md) | Account-wide discovery: AWS Config, Cloud Control API, Steampipe |
