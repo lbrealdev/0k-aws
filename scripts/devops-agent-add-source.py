@@ -19,8 +19,7 @@ whether repeated calls keep multiple sourceAws associations is untested here.
 Python (uv + boto3) rather than bash: trust-policy JSON and idempotent IAM
 are simpler in Python.
 
-Exit codes: 0 success/help; 2 usage (argparse default / no-args /
-unknown flags) or AWS error. See AGENTS.md and find-iam-role.sh.
+Exit codes (AGENTS.md): 0 help/success, 1 usage, 2 AWS error.
 """
 
 from __future__ import annotations
@@ -52,6 +51,15 @@ AWS_CONFIG_FILE = Path(
 )
 
 
+class ArgumentParser(argparse.ArgumentParser):
+    """Usage/unknown flags exit 1 (AGENTS.md Python)."""
+
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        print(f"Error: {message}", file=sys.stderr)
+        raise SystemExit(1)
+
+
 def log(msg: str) -> None:
     print(f"[INFO]  {msg}", file=sys.stderr)
 
@@ -64,7 +72,7 @@ def err(msg: str) -> None:
     print(f"[ERROR] {msg}", file=sys.stderr)
 
 
-def die(msg: str, code: int = 2) -> None:
+def die(msg: str, code: int = 1) -> None:
     err(msg)
     raise SystemExit(code)
 
@@ -76,8 +84,7 @@ def reject_env_credentials() -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    # Stock argparse: --help → 0; bad usage / unknown flags → 2.
-    p = argparse.ArgumentParser(
+    p = ArgumentParser(
         prog=SCRIPT_NAME,
         description=(
             "Ensure the DevOps Agent cross-account role in each secondary "

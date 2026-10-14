@@ -160,8 +160,8 @@ account via `--role-name` (default `DevOpsAgentCrossAccountRole`), optional
 `devops-agent associate-service`, and final `list-associations` commands.
 
 Output (apply): one `ACCOUNT<TAB>ASSOCIATION_ID<TAB>STATUS` line per associate,
-then association rows from `list-associations`. Exit codes: `0` success/help,
-`2` usage (no-args / unknown flags / bad args; argparse default) or AWS error.
+then association rows from `list-associations`. Exit codes ([AGENTS.md](../AGENTS.md)):
+`0` help/success, `1` usage (no-args / unknown flags / bad args), `2` AWS error.
 Named `--profile` only (env access keys refused). Requires
 [`uv`](https://docs.astral.sh/uv/). Works on Linux and Git Bash (`\r` stripped
 when reading `~/.aws/config`).
