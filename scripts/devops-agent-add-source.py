@@ -7,19 +7,13 @@
 # ///
 """Add secondary AWS accounts as sources to an existing DevOps Agent Space.
 
-SSO profiles only. Primary (--profile) owns the Agent Space. Each target
-account is reached via its SSO profile (sso_account_id in ~/.aws/config),
-same discovery idea as find-iam-role.sh.
+SSO profiles only (--source-profile / --target-profile). Account IDs come
+from STS get_caller_identity via boto3.Session(profile_name=...).
 
 Per target: ensure cross-account IAM role (trust + AIDevOpsAgentAccessPolicy),
-then associate from primary via devops-agent associate_service (serviceId aws,
-sourceAws). Official CLI onboarding uses service-id aws for secondary sources;
-whether repeated calls keep multiple sourceAws associations is untested here.
+then associate from the source profile via associate_service.
 
-Python (uv + boto3) rather than bash: trust-policy JSON and idempotent IAM
-are simpler in Python.
-
-Exit codes (AGENTS.md): 0 help/success, 1 usage, 2 AWS error.
+Exit codes: 0 ok, 1 usage, 2 precondition / verification / AWS.
 """
 
 from __future__ import annotations
@@ -27,14 +21,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 import time
-from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import (
+    BotoCoreError,
+    ClientError,
+    ProfileNotFound,
+    SSOTokenLoadError,
+    TokenRetrievalError,
+    UnauthorizedSSOTokenError,
+)
 
 SCRIPT_NAME = "devops-agent-add-source.py"
 ENV_CREDENTIAL_VARS = (
@@ -42,28 +41,32 @@ ENV_CREDENTIAL_VARS = (
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
 )
-ACCOUNT_ID_RE = re.compile(r"^\d{12}$")
 MANAGED_POLICY_ARN = "arn:aws:iam::aws:policy/AIDevOpsAgentAccessPolicy"
 DEFAULT_ROLE_NAME = "DevOpsAgentCrossAccountRole"
 SERVICE_PRINCIPAL = "aidevops.amazonaws.com"
-# Agent Space control plane is regional; see Supported Regions in the user guide.
-AWS_CONFIG_FILE = Path(
-    os.environ.get("AWS_CONFIG_FILE", Path.home() / ".aws" / "config")
-)
-# Bounded retry after create_role / trust update: IAM eventual consistency.
+SERVICE_CLIENT = "devops-agent"
+
 ASSOCIATE_RETRY_ATTEMPTS = 5
 ASSOCIATE_RETRY_BASE_SECONDS = 2.0
-# list-associations can lag briefly after a successful associate_service.
 VERIFY_LIST_ATTEMPTS = 5
 VERIFY_LIST_BASE_SECONDS = 1.0
 
+_SUB = "\x1a"
+_SSO_TOKEN_ERRORS: tuple[type[BaseException], ...] = (
+    UnauthorizedSSOTokenError,
+    SSOTokenLoadError,
+    TokenRetrievalError,
+)
+
 
 class HelpFormatter(argparse.RawDescriptionHelpFormatter):
-    """Show long option names only (short aliases still work)."""
+    """Long options only; keep -h with --help."""
 
     def _format_action_invocation(self, action: argparse.Action) -> str:
         if not action.option_strings:
             return super()._format_action_invocation(action)
+        if "--help" in action.option_strings:
+            return "-h, --help"
         longs = [o for o in action.option_strings if o.startswith("--")]
         if not longs:
             longs = list(action.option_strings)
@@ -75,62 +78,115 @@ class HelpFormatter(argparse.RawDescriptionHelpFormatter):
 
 
 class ArgumentParser(argparse.ArgumentParser):
-    """Usage/unknown flags exit 1 (AGENTS.md Python)."""
-
     def error(self, message: str) -> None:
         self.print_usage(sys.stderr)
         print(f"Error: {message}", file=sys.stderr)
         raise SystemExit(1)
 
 
-def log(msg: str) -> None:
-    print(f"[INFO]  {msg}", file=sys.stderr)
+def esc_data(value: str) -> str:
+    s = value.replace(_SUB, _SUB + "s")
+    return s.replace("\\", _SUB + "b")
 
 
-def warn(msg: str) -> None:
-    print(f"[WARN]  {msg}", file=sys.stderr)
+def unesc_data(value: str) -> str:
+    s = value.replace(_SUB + "b", "\\")
+    return s.replace(_SUB + "s", _SUB)
 
 
-def err(msg: str) -> None:
-    print(f"[ERROR] {msg}", file=sys.stderr)
+def safe_detail(detail: str) -> str:
+    return unesc_data(esc_data(detail)).replace("\033", "")
 
 
-def die(msg: str, code: int = 1) -> None:
-    err(msg)
-    raise SystemExit(code)
+class StatusUI:
+    """Short header + status lines on stderr. Color only when stderr is a TTY."""
+
+    def __init__(self, stream: TextIO | None = None) -> None:
+        self.stream = stream if stream is not None else sys.stderr
+        self.color = (
+            os.environ.get("NO_COLOR") is None
+            and hasattr(self.stream, "isatty")
+            and self.stream.isatty()
+        )
+
+    def _paint(self, code: str, text: str) -> str:
+        if not self.color:
+            return text
+        return f"\033[{code}m{text}\033[0m"
+
+    def _emit(self, mark: str, mark_color: str, label: str, detail: str) -> None:
+        mark_s = self._paint(mark_color, f"[{mark}]")
+        safe = safe_detail(detail) if detail else ""
+        print(f"{mark_s} {label:<10} {safe}".rstrip(), file=self.stream)
+
+    def header(self, text: str) -> None:
+        print(self._paint("1", text), file=self.stream)
+
+    def ok(self, label: str, detail: str = "") -> None:
+        self._emit("ok", "32", label, detail)
+
+    def warn(self, label: str, detail: str = "") -> None:
+        self._emit("warn", "33", label, detail)
+
+    def fail(self, label: str, detail: str = "") -> None:
+        self._emit("fail", "31", label, detail)
+
+    def skip(self, label: str, detail: str = "") -> None:
+        self._emit("skip", "90", label, detail)
+
+    def dry(self, label: str, detail: str = "") -> None:
+        self._emit("dry-run", "36", label, detail)
+
+    def summary(self, associated: int, skipped: int, failed: int) -> None:
+        detail = f"associated={associated} skipped={skipped} failed={failed}"
+        mark = "ok" if failed == 0 else "fail"
+        color = "32" if failed == 0 else "31"
+        self._emit(mark, color, "summary", detail)
+
+
+class VerificationError(Exception):
+    """Precondition / verification / SSO failure (exit 2)."""
+
+
+def die_usage(msg: str) -> None:
+    print(f"Error: {msg}", file=sys.stderr)
+    raise SystemExit(1)
 
 
 def reject_env_credentials() -> None:
     present = [name for name in ENV_CREDENTIAL_VARS if os.environ.get(name)]
     if present:
-        die("SSO profiles only; unset: " + " ".join(present), 1)
+        die_usage(
+            "named SSO profiles only (--source-profile / --target-profile); "
+            "unset " + " ".join(present)
+        )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = ArgumentParser(
         prog=SCRIPT_NAME,
         usage=(
-            f"{SCRIPT_NAME} --agent-space-id ID --profile PROFILE "
-            f"--region REGION [--dry-run] "
-            f"(ACCOUNT_ID... | --ou-id OU)"
+            f"{SCRIPT_NAME} --agent-space-id ID --source-profile PROFILE "
+            f"--region REGION --target-profile PROFILE "
+            f"[--target-profile PROFILE ...] [--dry-run]"
         ),
         description=(
             "Add secondary AWS accounts as DevOps Agent sources "
             "(SSO profiles only).\n"
-            "Pass at least one ACCOUNT_ID and/or --ou-id."
+            "Account IDs come from STS on each named profile.\n"
+            "\n"
+            "Exit codes: 0 ok, 1 usage, 2 precondition/verification/AWS."
         ),
         formatter_class=HelpFormatter,
+        add_help=False,
         epilog=(
             "Examples:\n"
             f"  {SCRIPT_NAME} --agent-space-id <SPACE_ID> \\\n"
-            "    --profile <PRIMARY_SSO> --region us-east-1 \\\n"
-            "    --dry-run 111122223333\n"
+            "    --source-profile <PRIMARY_SSO> --region us-east-1 \\\n"
+            "    --target-profile <SECONDARY_SSO> --dry-run\n"
             f"  {SCRIPT_NAME} --agent-space-id <SPACE_ID> \\\n"
-            "    --profile <PRIMARY_SSO> --region us-east-1 \\\n"
-            "    --ou-id ou-xxxx --dry-run\n"
-            "\n"
-            "Advanced flags (--role-name, --target-profile, --external-id): "
-            "see devops-agent/README.md."
+            "    --source-profile <PRIMARY_SSO> --region us-east-1 \\\n"
+            "    --target-profile <TARGET_A> --target-profile <TARGET_B>"
         ),
     )
 
@@ -144,11 +200,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Agent Space ID",
     )
     required.add_argument(
-        "--profile",
-        "-p",
+        "--source-profile",
         required=True,
         metavar="PROFILE",
-        help="Primary SSO profile (owns the Agent Space)",
+        help="SSO profile for the primary account (owns the Agent Space)",
     )
     required.add_argument(
         "--region",
@@ -156,38 +211,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="REGION",
         help="Agent Space region (DevOps Agent Supported Region)",
     )
+    required.add_argument(
+        "--target-profile",
+        action="append",
+        required=True,
+        metavar="PROFILE",
+        dest="target_profiles",
+        help="SSO profile for a secondary account (repeatable)",
+    )
 
-    targets = p.add_argument_group("targets (need at least one)")
-    targets.add_argument(
-        "accounts",
-        nargs="*",
-        metavar="ACCOUNT_ID",
-        help="Secondary account ID(s)",
-    )
-    targets.add_argument(
-        "--ou-id",
-        metavar="OU",
-        help="All ACTIVE accounts in this OU (Orgs admin profile)",
-    )
-    targets.add_argument(
+    optional = p.add_argument_group("optional")
+    optional.add_argument(
         "--dry-run",
         action="store_true",
         help="Print planned changes; write nothing",
     )
+    optional.add_argument(
+        "-h",
+        "--help",
+        action="help",
+        help="Show this help message and exit",
+    )
 
-    # Kept working; documented in README (hidden here to keep --help short).
     p.add_argument(
         "--role-name",
         "-r",
         default=DEFAULT_ROLE_NAME,
         metavar="NAME",
-        help=argparse.SUPPRESS,
-    )
-    p.add_argument(
-        "--target-profile",
-        action="append",
-        default=[],
-        metavar="ACCOUNT=PROFILE",
         help=argparse.SUPPRESS,
     )
     p.add_argument(
@@ -198,83 +248,56 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def discover_sso_account_profiles(config_path: Path) -> dict[str, str]:
-    """Map account ID -> profile name from SSO profiles in AWS config.
-
-    Mirrors find-iam-role.sh discovery; also reads sso_account_id.
-    Strips \\r for Git Bash portability.
-    """
-    mapping: dict[str, str] = {}
-    if not config_path.is_file():
-        return mapping
-
-    name = ""
-    sso = False
-    account_id = ""
-
-    def emit() -> None:
-        nonlocal name, sso, account_id
-        if name and sso and ACCOUNT_ID_RE.match(account_id):
-            mapping.setdefault(account_id, name)
-        name = ""
-        sso = False
-        account_id = ""
-
-    text = config_path.read_text(encoding="utf-8", errors="replace")
-    for raw in text.splitlines():
-        line = raw.replace("\r", "").strip()
-        if line.startswith("[") and line.endswith("]"):
-            emit()
-            body = line[1:-1].strip()
-            if body.startswith("profile "):
-                name = body[len("profile ") :].strip()
-            elif body == "default":
-                name = "default"
-            else:
-                name = ""
-            continue
-        if not name or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip()
-        if key in ("sso_session", "sso_start_url", "sso_account_id"):
-            sso = True
-        if key == "sso_account_id":
-            account_id = value
-    emit()
-    return mapping
-
-
-def parse_target_profile_overrides(items: list[str]) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for item in items:
-        if "=" not in item:
-            die(f"invalid --target-profile (want ACCOUNT=PROFILE): {item}")
-        acct, _, profile = item.partition("=")
-        acct = acct.strip()
-        profile = profile.strip()
-        if not ACCOUNT_ID_RE.match(acct) or not profile:
-            die(f"invalid --target-profile (want ACCOUNT=PROFILE): {item}")
-        out[acct] = profile
-    return out
-
-
 def session_for_profile(profile: str, region: str | None = None) -> boto3.Session:
-    kwargs: dict[str, Any] = {"profile_name": profile}
-    if region:
-        kwargs["region_name"] = region
-    return boto3.Session(**kwargs)
-
-
-def sts_account(profile: str) -> str | None:
-    """Return account ID if profile is logged in, else None."""
     try:
-        return session_for_profile(profile).client("sts").get_caller_identity()[
-            "Account"
-        ]
-    except (ClientError, BotoCoreError):
-        return None
+        kwargs: dict[str, Any] = {"profile_name": profile}
+        if region:
+            kwargs["region_name"] = region
+        return boto3.Session(**kwargs)
+    except ProfileNotFound as exc:
+        raise VerificationError(
+            f"profile '{profile}' not found in AWS config; "
+            f"check [profile {profile}] with sso_session / sso_account_id / "
+            f"sso_role_name / region and a matching [sso-session ...] block"
+        ) from exc
+
+
+def sso_login_hint(profile: str) -> str:
+    return f"aws sso login --profile {profile}"
+
+
+def resolve_account_id(session: boto3.Session, profile: str) -> str:
+    try:
+        return session.client("sts").get_caller_identity()["Account"]
+    except _SSO_TOKEN_ERRORS as exc:
+        raise VerificationError(
+            f"SSO token missing or expired for profile '{profile}'; "
+            f"run '{sso_login_hint(profile)}'"
+        ) from exc
+    except (ClientError, BotoCoreError) as exc:
+        msg = str(exc).lower()
+        name = type(exc).__name__.lower()
+        if any(
+            s in msg or s in name
+            for s in (
+                "unauthorizedssotoken",
+                "ssotokenload",
+                "tokenretrieval",
+                "token",
+                "sso",
+                "refresh",
+                "expired",
+                "unable to locate credentials",
+                "error when retrieving token",
+            )
+        ):
+            raise VerificationError(
+                f"cannot authenticate profile '{profile}'; "
+                f"run '{sso_login_hint(profile)}' ({exc})"
+            ) from exc
+        raise VerificationError(
+            f"STS failed for profile '{profile}': {exc}"
+        ) from exc
 
 
 def agent_space_arn(region: str, primary_account: str, space_id: str) -> str:
@@ -330,7 +353,6 @@ def iter_associations(devops: Any, space_id: str) -> list[dict[str, Any]]:
 
 
 def account_id_from_association(assoc: dict[str, Any]) -> str | None:
-    """Extract accountId from sourceAws or aws configuration, or None."""
     cfg = assoc.get("configuration") or {}
     for key in ("sourceAws", "aws"):
         acct = (cfg.get(key) or {}).get("accountId")
@@ -339,8 +361,9 @@ def account_id_from_association(assoc: dict[str, Any]) -> str | None:
     return None
 
 
-def list_associated_account_ids(devops: Any, space_id: str) -> set[str]:
-    """Return account IDs from list_associations; warn on missing accountId."""
+def list_associated_account_ids(
+    devops: Any, space_id: str, ui: StatusUI
+) -> set[str]:
     ids: set[str] = set()
     for assoc in iter_associations(devops, space_id):
         acct = account_id_from_association(assoc)
@@ -349,18 +372,17 @@ def list_associated_account_ids(devops: Any, space_id: str) -> set[str]:
             continue
         assoc_id = assoc.get("associationId") or "?"
         service_id = assoc.get("serviceId") or "?"
-        warn(
+        ui.warn(
+            "list",
             f"list_associations entry lacks "
             f"configuration.sourceAws/aws.accountId "
             f"(associationId={assoc_id} serviceId={service_id}); "
-            f"skip logic cannot see this association"
+            f"skip logic cannot see this association",
         )
     return ids
 
 
 def print_association_summary(associations: list[dict[str, Any]]) -> None:
-    """Stdout: ASSOCIATION_ID\\tSERVICE_ID\\tACCOUNT\\tACCOUNT_TYPE\\tSTATUS."""
-    print("# associations", file=sys.stderr)
     for assoc in associations:
         cfg = assoc.get("configuration") or {}
         account = ""
@@ -371,14 +393,6 @@ def print_association_summary(associations: list[dict[str, Any]]) -> None:
         elif cfg.get("aws"):
             account = cfg["aws"].get("accountId") or ""
             account_type = cfg["aws"].get("accountType") or "monitor"
-        if not account:
-            assoc_id = assoc.get("associationId") or "?"
-            service_id = assoc.get("serviceId") or "?"
-            warn(
-                f"list_associations entry lacks "
-                f"configuration.sourceAws/aws.accountId "
-                f"(associationId={assoc_id} serviceId={service_id})"
-            )
         print(
             f"{assoc.get('associationId', '')}\t"
             f"{assoc.get('serviceId', '')}\t"
@@ -393,25 +407,17 @@ def verify_prior_associations_retained(
     space_id: str,
     prior: set[str],
     just_added: str,
+    ui: StatusUI,
 ) -> None:
-    """Fail loudly if a prior associated account disappeared after associate.
-
-    associate-service docs say it overwrites the association of the same
-    service; CLI onboarding implies sourceAws associations can accumulate.
-    Until a multi-account sandbox run confirms accumulation, require that every
-    previously listed account remains. The newly added account may lag in
-    list-associations, so poll briefly for it before failing.
-    """
-    current = list_associated_account_ids(devops, space_id)
+    current = list_associated_account_ids(devops, space_id, ui)
     missing_prior = sorted(prior - current)
     if missing_prior:
-        die(
+        raise VerificationError(
             "associate-service appears to have dropped prior associations "
             f"(missing accountIds: {', '.join(missing_prior)}). "
             "CLI docs warn that associate-service overwrites the existing "
             "association of the same service; refuse to continue. "
-            "Verify multi-account behavior before re-running.",
-            2,
+            "Verify multi-account behavior before re-running."
         )
 
     if just_added in current:
@@ -419,72 +425,31 @@ def verify_prior_associations_retained(
 
     for attempt in range(1, VERIFY_LIST_ATTEMPTS + 1):
         delay = VERIFY_LIST_BASE_SECONDS * (2 ** (attempt - 1))
-        warn(
+        ui.warn(
+            "verify",
             f"list_associations does not yet include {just_added} "
             f"(attempt {attempt}/{VERIFY_LIST_ATTEMPTS}); "
-            f"retrying in {delay:.0f}s"
+            f"retrying in {delay:.0f}s",
         )
         time.sleep(delay)
-        current = list_associated_account_ids(devops, space_id)
+        current = list_associated_account_ids(devops, space_id, ui)
         missing_prior = sorted(prior - current)
         if missing_prior:
-            die(
+            raise VerificationError(
                 "associate-service appears to have dropped prior associations "
                 f"(missing accountIds: {', '.join(missing_prior)}). "
                 "CLI docs warn that associate-service overwrites the existing "
                 "association of the same service; refuse to continue. "
-                "Verify multi-account behavior before re-running.",
-                2,
+                "Verify multi-account behavior before re-running."
             )
         if just_added in current:
             return
 
-    die(
+    raise VerificationError(
         f"associate-service succeeded for {just_added}, but "
         f"list-associations still does not list that accountId after "
-        f"{VERIFY_LIST_ATTEMPTS} polls. Check the Agent Space manually.",
-        2,
+        f"{VERIFY_LIST_ATTEMPTS} polls. Check the Agent Space manually."
     )
-
-
-def verify_list_associations(
-    *,
-    devops: Any,
-    space_id: str,
-    region: str,
-    profile: str,
-    dry_run: bool,
-) -> None:
-    """List associations after associate (or print the planned check)."""
-    if dry_run:
-        print_cmd(
-            [
-                "aws",
-                "devops-agent",
-                "list-associations",
-                "--agent-space-id",
-                shell_quote(space_id),
-                "--profile",
-                shell_quote(profile),
-                "--region",
-                shell_quote(region),
-            ]
-        )
-        return
-    associations = iter_associations(devops, space_id)
-    print_association_summary(associations)
-
-
-def list_ou_account_ids(org: Any, ou_id: str) -> list[str]:
-    ids: list[str] = []
-    paginator = org.get_paginator("list_accounts_for_parent")
-    for page in paginator.paginate(ParentId=ou_id):
-        for acct in page.get("Accounts") or []:
-            if acct.get("Status") == "ACTIVE" and ACCOUNT_ID_RE.match(
-                acct.get("Id", "")
-            ):
-                ids.append(acct["Id"])
-    return ids
 
 
 def ensure_cross_account_role(
@@ -495,13 +460,8 @@ def ensure_cross_account_role(
     trust: dict[str, Any],
     dry_run: bool,
     profile: str,
+    ui: StatusUI,
 ) -> tuple[str, bool]:
-    """Create or update the role; attach managed policy.
-
-    Returns (role_arn, retry_associate_for_iam). The flag is True when
-    create_role or update_assume_role_policy ran (or would in dry-run), so
-    callers can retry associate_service for IAM propagation.
-    """
     trust_json = json.dumps(trust)
     role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
     suffix = ["--profile", shell_quote(profile)]
@@ -537,6 +497,7 @@ def ensure_cross_account_role(
         if dry_run:
             print_cmd(create_cmd)
             print_cmd(attach_cmd)
+            ui.dry("iam", f"create-role {role_name}")
             return role_arn, True
         created = iam.create_role(
             RoleName=role_name,
@@ -544,6 +505,7 @@ def ensure_cross_account_role(
             Description="AWS DevOps Agent secondary source role",
         )["Role"]
         iam.attach_role_policy(RoleName=role_name, PolicyArn=MANAGED_POLICY_ARN)
+        ui.ok("iam", f"created {role_name}")
         return created["Arn"], True
 
     role_arn = existing["Arn"]
@@ -565,16 +527,17 @@ def ensure_cross_account_role(
         ]
         if dry_run:
             print_cmd(cmd)
+            ui.dry("iam", f"update trust {role_name}")
             trust_updated = True
         else:
             iam.update_assume_role_policy(
                 RoleName=role_name,
                 PolicyDocument=trust_json,
             )
-            log(f"updated trust policy on {role_name}")
+            ui.ok("iam", f"updated trust on {role_name}")
             trust_updated = True
     else:
-        log(f"role exists with matching trust: {role_name}")
+        ui.ok("iam", f"role exists with matching trust: {role_name}")
 
     attached = {
         p["PolicyArn"]
@@ -595,9 +558,10 @@ def ensure_cross_account_role(
         ]
         if dry_run:
             print_cmd(cmd)
+            ui.dry("iam", f"attach {MANAGED_POLICY_ARN}")
         else:
             iam.attach_role_policy(RoleName=role_name, PolicyArn=MANAGED_POLICY_ARN)
-            log(f"attached {MANAGED_POLICY_ARN}")
+            ui.ok("iam", f"attached {MANAGED_POLICY_ARN}")
     return role_arn, trust_updated
 
 
@@ -613,7 +577,6 @@ def _is_passrole_denied(exc: BaseException) -> bool:
     msg = _client_error_message(exc).lower()
     if "passrole" in msg or "iam:passrole" in msg:
         return True
-    # AccessDenied naming PassRole is the documented secondary-account failure.
     return code in ("AccessDeniedException", "AccessDenied") and "passrole" in msg
 
 
@@ -628,7 +591,6 @@ def passrole_denied_message(exc: BaseException) -> str:
 
 
 def _is_retryable_associate_error(exc: BaseException) -> bool:
-    """Retry only propagation / transient cases — not PassRole denials."""
     if _is_passrole_denied(exc):
         return False
     if isinstance(exc, ClientError):
@@ -641,7 +603,6 @@ def _is_retryable_associate_error(exc: BaseException) -> bool:
         ):
             return True
         msg = _client_error_message(exc).lower()
-        # Role/trust just written; service may need a moment to assume it.
         if any(
             needle in msg
             for needle in (
@@ -667,11 +628,8 @@ def associate_source(
     profile: str,
     dry_run: bool,
     retry_on_iam_propagation: bool,
+    ui: StatusUI,
 ) -> tuple[str, str] | None:
-    # Official CLI onboarding uses service-id aws + sourceAws for secondary
-    # accounts. Docs also say associate-service "overwrites the existing
-    # association of the same service" — multi-account retention untested;
-    # callers verify prior associations after each successful apply.
     source: dict[str, Any] = {
         "accountId": account_id,
         "accountType": "source",
@@ -686,7 +644,7 @@ def associate_source(
         print_cmd(
             [
                 "aws",
-                "devops-agent",
+                SERVICE_CLIENT,
                 "associate-service",
                 "--agent-space-id",
                 shell_quote(space_id),
@@ -700,6 +658,7 @@ def associate_source(
                 shell_quote(region),
             ]
         )
+        ui.dry("associate", account_id)
         return None
 
     attempts = ASSOCIATE_RETRY_ATTEMPTS if retry_on_iam_propagation else 1
@@ -712,74 +671,25 @@ def associate_source(
                 configuration=configuration,
             )
             assoc = resp.get("association") or {}
-            return assoc.get("associationId", ""), assoc.get("status", "")
+            assoc_id = assoc.get("associationId", "")
+            status = assoc.get("status", "")
+            ui.ok("associate", f"{account_id} {assoc_id} {status}")
+            return assoc_id, status
         except (ClientError, BotoCoreError) as exc:
             last_exc = exc
             if _is_passrole_denied(exc):
-                raise ClientError(
-                    {
-                        "Error": {
-                            "Code": "AccessDeniedException",
-                            "Message": passrole_denied_message(exc),
-                        }
-                    },
-                    "AssociateService",
-                ) from exc
+                raise VerificationError(passrole_denied_message(exc)) from exc
             if attempt >= attempts or not _is_retryable_associate_error(exc):
                 raise
             delay = ASSOCIATE_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
-            warn(
-                f"associate_service for {account_id} failed "
-                f"(attempt {attempt}/{attempts}): {exc}; "
-                f"retrying in {delay:.0f}s (IAM propagation)"
+            ui.warn(
+                "associate",
+                f"{account_id} attempt {attempt}/{attempts}: {exc}; "
+                f"retry in {delay:.0f}s",
             )
             time.sleep(delay)
     assert last_exc is not None
     raise last_exc
-
-
-def collect_account_ids(
-    *,
-    accounts: list[str],
-    ou_id: str | None,
-    org: Any | None,
-    associated: set[str],
-) -> list[str]:
-    targets: list[str] = []
-    seen: set[str] = set()
-
-    for acct in accounts:
-        if not ACCOUNT_ID_RE.match(acct):
-            die(f"invalid account ID: {acct}", 1)
-        if acct not in seen:
-            targets.append(acct)
-            seen.add(acct)
-
-    if ou_id:
-        assert org is not None
-        for acct in list_ou_account_ids(org, ou_id):
-            if acct in associated:
-                log(f"skip already associated: {acct}")
-                continue
-            if acct not in seen:
-                targets.append(acct)
-                seen.add(acct)
-
-    filtered: list[str] = []
-    for acct in targets:
-        if acct in associated:
-            log(f"skip already associated: {acct}")
-            continue
-        filtered.append(acct)
-    return filtered
-
-
-def resolve_target_profile(
-    account_id: str,
-    overrides: dict[str, str],
-    discovered: dict[str, str],
-) -> str | None:
-    return overrides.get(account_id) or discovered.get(account_id)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -789,91 +699,90 @@ def main(argv: list[str] | None = None) -> int:
         code = exc.code
         if code is None or code == 0:
             return 0
-        # ArgumentParser.error → 1; keep usage as 1 (AGENTS.md).
         return 1
 
-    if not args.accounts and not args.ou_id:
-        die("provide at least one ACCOUNT_ID or --ou-id", 1)
-
     reject_env_credentials()
-    overrides = parse_target_profile_overrides(args.target_profile)
-    discovered = discover_sso_account_profiles(AWS_CONFIG_FILE)
-    log(f"SSO account profiles in {AWS_CONFIG_FILE}: {len(discovered)}")
+    ui = StatusUI()
+
+    targets: list[str] = []
+    seen: set[str] = set()
+    for profile in args.target_profiles:
+        if profile not in seen:
+            targets.append(profile)
+            seen.add(profile)
+
+    if not targets:
+        die_usage("provide at least one --target-profile")
+
+    associated = 0
+    skipped = 0
+    failed = 0
 
     try:
-        primary = session_for_profile(args.profile, args.region)
+        ui.header(
+            f"{SCRIPT_NAME}  space={args.agent_space_id}  "
+            f"region={args.region}  dry_run={args.dry_run}"
+        )
+
         try:
-            primary_acct = primary.client("sts").get_caller_identity()["Account"]
-        except (ClientError, BotoCoreError):
-            die(
-                f"primary profile '{args.profile}' not logged in; "
-                f"aws sso login --profile {args.profile}",
-                1,
-            )
+            primary = session_for_profile(args.source_profile, args.region)
+            primary_acct = resolve_account_id(primary, args.source_profile)
+        except VerificationError as exc:
+            ui.fail("source", str(exc))
+            ui.summary(0, 0, 1)
+            return 2
 
-        devops = primary.client("devops-agent", region_name=args.region)
-        org = primary.client("organizations") if args.ou_id else None
+        ui.ok("source", f"{args.source_profile} account={primary_acct}")
+
+        devops = primary.client(SERVICE_CLIENT, region_name=args.region)
         space_id = args.agent_space_id
-
-        known_associated = list_associated_account_ids(devops, space_id)
-        log(
-            "already associated accounts: "
-            + (", ".join(sorted(known_associated)) if known_associated else "(none)")
-        )
-
-        targets = collect_account_ids(
-            accounts=list(args.accounts),
-            ou_id=args.ou_id,
-            org=org,
-            associated=known_associated,
-        )
-        if not targets:
-            die("no accounts to associate", 1)
-
         trust = trust_document(primary_acct, args.region, space_id)
-        log(
-            f"primary={primary_acct} space={space_id} "
-            f"targets={len(targets)} dry_run={args.dry_run}"
+
+        try:
+            known_associated = list_associated_account_ids(devops, space_id, ui)
+        except (ClientError, BotoCoreError) as exc:
+            ui.fail("list", str(exc))
+            ui.summary(0, 0, 1)
+            return 2
+
+        ui.ok(
+            "list",
+            "already associated: "
+            + (
+                ", ".join(sorted(known_associated))
+                if known_associated
+                else "(none)"
+            ),
         )
 
-        aws_failed = False
-        scanned = 0
-        skipped = 0
-
-        for account_id in targets:
-            profile = resolve_target_profile(account_id, overrides, discovered)
-            if not profile:
-                warn(f"skip '{account_id}' (no SSO profile in {AWS_CONFIG_FILE})")
-                skipped += 1
-                continue
-
-            logged = sts_account(profile)
-            if logged is None:
-                warn(
-                    f"skip '{profile}' (not logged in; "
-                    f"aws sso login --profile {profile})"
-                )
-                skipped += 1
-                continue
-            if logged != account_id:
-                warn(
-                    f"skip '{profile}' "
-                    f"(sts account {logged} != expected {account_id})"
-                )
-                skipped += 1
-                continue
-
-            scanned += 1
-            log(f"processing {account_id} via profile {profile}")
+        for target_profile in targets:
             try:
-                iam = session_for_profile(profile).client("iam")
+                target_session = session_for_profile(target_profile)
+                account_id = resolve_account_id(target_session, target_profile)
+
+                if account_id == primary_acct:
+                    ui.skip(
+                        "target",
+                        f"{target_profile} same as source {primary_acct}",
+                    )
+                    skipped += 1
+                    continue
+
+                if account_id in known_associated:
+                    ui.skip("target", f"{account_id} already associated")
+                    skipped += 1
+                    continue
+
+                ui.ok("target", f"{target_profile} account={account_id}")
+                iam = target_session.client("iam")
                 role_arn, retry_iam = ensure_cross_account_role(
                     iam=iam,
                     account_id=account_id,
                     role_name=args.role_name,
                     trust=trust,
                     dry_run=args.dry_run,
-                    profile=profile,
+                    profile=target_profile,
+                    ui=ui,
                 )
                 if args.dry_run:
                     role_arn = f"arn:aws:iam::{account_id}:role/{args.role_name}"
@@ -885,9 +794,10 @@ def main(argv: list[str] | None = None) -> int:
                     role_arn=role_arn,
                     external_id=args.external_id,
                     region=args.region,
-                    profile=args.profile,
+                    profile=args.source_profile,
                     dry_run=args.dry_run,
                     retry_on_iam_propagation=retry_iam and not args.dry_run,
+                    ui=ui,
                 )
                 if result is not None:
                     assoc_id, status = result
@@ -897,36 +807,54 @@ def main(argv: list[str] | None = None) -> int:
                         space_id=space_id,
                         prior=known_associated,
                         just_added=account_id,
+                        ui=ui,
                     )
                     known_associated.add(account_id)
+                associated += 1
+            except VerificationError as exc:
+                ui.fail("target", str(exc))
+                failed += 1
             except (ClientError, BotoCoreError) as exc:
-                err(f"failed for {account_id}: {exc}")
-                aws_failed = True
+                ui.fail("target", f"{target_profile}: {exc}")
+                failed += 1
 
-        log(f"scanned={scanned} skipped={skipped}")
-
-        if scanned == 0:
-            die("no reachable SSO profiles for target accounts", 1)
+        if associated == 0 and failed == 0:
+            ui.fail("summary", "no target profiles left to associate")
+            ui.summary(associated, skipped, 1)
+            return 2
 
         try:
-            verify_list_associations(
-                devops=devops,
-                space_id=space_id,
-                region=args.region,
-                profile=args.profile,
-                dry_run=args.dry_run,
-            )
+            if args.dry_run:
+                print_cmd(
+                    [
+                        "aws",
+                        SERVICE_CLIENT,
+                        "list-associations",
+                        "--agent-space-id",
+                        shell_quote(space_id),
+                        "--profile",
+                        shell_quote(args.source_profile),
+                        "--region",
+                        shell_quote(args.region),
+                    ]
+                )
+                ui.dry("list", "list-associations")
+            else:
+                print_association_summary(iter_associations(devops, space_id))
+                ui.ok("list", "final associations written to stdout")
         except (ClientError, BotoCoreError) as exc:
-            err(f"list-associations failed: {exc}")
-            aws_failed = True
+            ui.fail("list", str(exc))
+            failed += 1
 
-        if args.dry_run:
-            log("dry run: nothing changed")
-        return 2 if aws_failed else 0
-    except SystemExit:
-        raise
+        ui.summary(associated, skipped, failed)
+        return 2 if failed else 0
+    except VerificationError as exc:
+        ui.fail("run", str(exc))
+        ui.summary(associated, skipped, failed + 1)
+        return 2
     except (ClientError, BotoCoreError) as exc:
-        err(str(exc))
+        ui.fail("run", str(exc))
+        ui.summary(associated, skipped, failed + 1)
         return 2
 
 

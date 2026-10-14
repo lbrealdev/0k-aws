@@ -33,15 +33,16 @@ each target account the helper script:
 3. Lists associations (`list-associations`) so you can confirm what the Agent
    Space holds after the run.
 
-Access is **SSO profiles only**: `--profile` is the Agent Space owner; each
-target uses its SSO profile (`sso_account_id` in `~/.aws/config`, same idea as
-[`find-iam-role.sh`](../scripts/find-iam-role.sh)), or an explicit
-`--target-profile ACCOUNT=PROFILE`. Accounts with no profile or not logged in
-are skipped (same skip style as `find-iam-role.sh`).
+Access is **SSO profiles only**: `--source-profile` is the Agent Space owner;
+each `--target-profile` is a secondary SSO profile. Account IDs come from STS
+`get_caller_identity` (modern `[profile NAME]` with `sso_session`,
+`sso_account_id`, `sso_role_name`, `region`, plus an `[sso-session ...]`
+block). If SSO is not logged in or the token is expired, the script prints
+`aws sso login --profile NAME` and exits 2.
 
 ### Prerequisites
 
-**Primary account (caller / `--profile`):**
+**Primary account (caller / `--source-profile`):**
 
 - Credentials for the Agent Space owner (SSO profile).
 - Permission to call `aidevops:AssociateService` / `ListAssociations`.
@@ -55,13 +56,10 @@ are skipped (same skip style as `find-iam-role.sh`).
   multiple AWS
   Accounts](https://docs.aws.amazon.com/devopsagent/latest/userguide/configuring-integrations-and-knowledge-connecting-multiple-aws-accounts.html)
   and [SourceAwsConfiguration](https://docs.aws.amazon.com/devopsagent/latest/APIReference/API_SourceAwsConfiguration.html).
-- `--ou-id`: the primary profile must be the Organizations **management**
-  account or a **delegated administrator** (the script calls
-  `list-accounts-for-parent` with that profile).
 
-**Each secondary (target) account:**
+**Each secondary (target) account (`--target-profile`):**
 
-- SSO profile logged in (or mapped via `--target-profile`).
+- SSO profile logged in.
 - Permission to `iam:CreateRole`, `iam:UpdateAssumeRolePolicy`,
   `iam:AttachRolePolicy`, and `iam:GetRole` / `iam:ListAttachedRolePolicies`
   for the role name you pass.
@@ -140,39 +138,34 @@ a [uv inline script](https://docs.astral.sh/uv/guides/scripts/#declaring-script-
 (Python + boto3). Prefer it over a shell script: trust-policy JSON and
 idempotent IAM are simpler in Python.
 
-**Usual flags:** `--agent-space-id`, `--profile`, `--region`, one or more
-`ACCOUNT_ID`s and/or `--ou-id`, optional `--dry-run`.
+**Usual flags:** `--agent-space-id`, `--source-profile`, `--region`, one or
+more `--target-profile`, optional `--dry-run`.
 
-**Advanced** (accepted; see `--help` pointer to this section):
+**Tuning** (accepted; documented here only, not in `--help`):
 
 | Flag | Purpose |
 |------|---------|
 | `--role-name NAME` | IAM role name in each secondary (default `DevOpsAgentCrossAccountRole`) |
-| `--target-profile ACCOUNT=PROFILE` | Map account → SSO profile when config discovery is missing/ambiguous (repeatable) |
 | `--external-id ID` | Optional `externalId` on the secondary association |
 
 ```bash
-# Preview: explicit accounts
+# Preview
 ./scripts/devops-agent-add-source.py --agent-space-id <SPACE_ID> \
-  --profile <PRIMARY_SSO> --region <REGION> \
-  --dry-run <ACCOUNT_ID> [<ACCOUNT_ID>...]
+  --source-profile <PRIMARY_SSO> --region <REGION> \
+  --target-profile <SECONDARY_SSO> --dry-run
 
-# Preview: ACTIVE accounts under an OU (skips already associated;
-# primary profile must be Organizations management or delegated admin)
+# Multiple targets
 ./scripts/devops-agent-add-source.py --agent-space-id <SPACE_ID> \
-  --profile <PRIMARY_SSO> --region <REGION> \
-  --ou-id <OU_ID> --dry-run
-
-# Advanced: explicit profile map
-./scripts/devops-agent-add-source.py --agent-space-id <SPACE_ID> \
-  --profile <PRIMARY_SSO> --region <REGION> \
-  --target-profile 111122223333=my-sso-profile --dry-run 111122223333
+  --source-profile <PRIMARY_SSO> --region <REGION> \
+  --target-profile <TARGET_A> --target-profile <TARGET_B>
 
 # Apply: drop --dry-run
 ```
 
 `--dry-run` still uses SSO to decide create vs update, but only prints the
-IAM / associate-service / list-associations commands.
+IAM / associate-service / list-associations commands on stdout. Status lines
+(ok / warn / fail / skip / dry-run) and a final summary go to stderr. Color
+only when stderr is a TTY and `NO_COLOR` is unset.
 
 When a role was just created or its trust policy was just updated,
 `associate_service` retries briefly with backoff (IAM eventual consistency).
@@ -180,12 +173,10 @@ Missing `iam:PassRole` fails immediately with a clear error (no long retry).
 Entries from `list-associations` that lack account IDs are logged as warnings
 so skip logic never fails silently.
 
-Output (apply): one `ACCOUNT<TAB>ASSOCIATION_ID<TAB>STATUS` line per associate,
-then association rows from `list-associations`. Exit codes ([AGENTS.md](../AGENTS.md)):
-`0` help/success, `1` usage (no-args / unknown flags / bad args), `2` AWS error.
-Named `--profile` only (env access keys refused). Requires
-[`uv`](https://docs.astral.sh/uv/). Works on Linux and Git Bash (`\r` stripped
-when reading `~/.aws/config`).
+Output (apply): one `ACCOUNT<TAB>ASSOCIATION_ID<TAB>STATUS` line per associate
+on stdout, then association rows from `list-associations`. Exit codes:
+`0` ok, `1` usage, `2` precondition / verification / AWS. Named SSO profiles
+only (env access keys refused). Requires [`uv`](https://docs.astral.sh/uv/).
 
 ## References
 
