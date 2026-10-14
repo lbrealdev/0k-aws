@@ -243,6 +243,8 @@ class DryRunMainTest(unittest.TestCase):
 
         target_session.client.side_effect = target_client
 
+        source_session.region_name = "us-east-1"
+
         def session_for(profile, region=None):
             if profile == "source":
                 return source_session
@@ -261,11 +263,9 @@ class DryRunMainTest(unittest.TestCase):
                 [
                     "--agent-space-id",
                     "space-1",
-                    "--source-profile",
+                    "--source",
                     "source",
-                    "--region",
-                    "us-east-1",
-                    "--target-profile",
+                    "--target",
                     "target",
                     "--dry-run",
                 ]
@@ -293,11 +293,14 @@ class ParseArgsTest(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 0)
         text = out.getvalue()
         self.assertIn("-h, --help", text)
-        self.assertIn("--source-profile", text)
-        self.assertIn("--target-profile", text)
+        self.assertIn("--source", text)
+        self.assertIn("--target", text)
         self.assertIn("required:", text)
         self.assertIn("optional:", text)
-        self.assertNotIn("Advanced", text)
+        self.assertNotIn("Exit codes", text)
+        self.assertNotIn("Examples:", text)
+        self.assertNotIn("--source-profile", text)
+        self.assertNotIn("--target-profile", text)
         self.assertEqual(text.count("\noptions:"), 0)
 
     def test_h_exits_0(self) -> None:
@@ -311,10 +314,94 @@ class ParseArgsTest(unittest.TestCase):
                 [
                     "--agent-space-id",
                     "s",
-                    "--source-profile",
+                    "--source",
                     "src",
-                    "--region",
-                    "us-east-1",
+                ]
+            )
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_region_defaults_from_source_session(self) -> None:
+        source_session = MagicMock()
+        source_session.region_name = "eu-west-1"
+        source_sts = MagicMock()
+        source_sts.get_caller_identity.return_value = {"Account": "999988887777"}
+        client = MagicMock()
+        client.list_associations.return_value = {"associations": []}
+        source_session.client.side_effect = lambda name, **kw: (
+            source_sts if name == "sts" else client
+        )
+
+        target_session = MagicMock()
+        target_sts = MagicMock()
+        target_sts.get_caller_identity.return_value = {"Account": "111122223333"}
+        expected = mod.trust_document("999988887777", "eu-west-1", "space-1")
+        iam = MagicMock()
+        iam.get_role.return_value = {
+            "Role": {
+                "Arn": "arn:aws:iam::111122223333:role/" + mod.DEFAULT_ROLE_NAME,
+                "AssumeRolePolicyDocument": expected,
+            }
+        }
+        iam.list_attached_role_policies.return_value = {
+            "AttachedPolicies": [{"PolicyArn": mod.MANAGED_POLICY_ARN}]
+        }
+
+        def target_client(name, **kw):
+            if name == "sts":
+                return target_sts
+            if name == "iam":
+                return iam
+            raise AssertionError(name)
+
+        target_session.client.side_effect = target_client
+
+        def session_for(profile, region=None):
+            self.assertIsNone(region)
+            if profile == "source":
+                return source_session
+            return target_session
+
+        err = io.StringIO()
+        with (
+            patch.object(mod, "session_for_profile", side_effect=session_for),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(err),
+        ):
+            code = mod.main(
+                [
+                    "--agent-space-id",
+                    "space-1",
+                    "--source",
+                    "source",
+                    "--target",
+                    "target",
+                    "--dry-run",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("region=eu-west-1", err.getvalue())
+
+    def test_missing_region_exits_1(self) -> None:
+        source_session = MagicMock()
+        source_session.region_name = None
+        source_sts = MagicMock()
+        source_sts.get_caller_identity.return_value = {"Account": "999988887777"}
+        source_session.client.return_value = source_sts
+
+        with (
+            patch.object(mod, "session_for_profile", return_value=source_session),
+            redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            mod.main(
+                [
+                    "--agent-space-id",
+                    "space-1",
+                    "--source",
+                    "source",
+                    "--target",
+                    "target",
+                    "--dry-run",
                 ]
             )
         self.assertEqual(ctx.exception.code, 1)

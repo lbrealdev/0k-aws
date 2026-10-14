@@ -33,16 +33,17 @@ each target account the helper script:
 3. Lists associations (`list-associations`) so you can confirm what the Agent
    Space holds after the run.
 
-Access is **SSO profiles only**: `--source-profile` is the Agent Space owner;
-each `--target-profile` is a secondary SSO profile. Account IDs come from STS
+Access is **SSO profiles only**: `--source` is the Agent Space owner; each
+`--target` is a secondary SSO profile. Account IDs come from STS
 `get_caller_identity` (modern `[profile NAME]` with `sso_session`,
 `sso_account_id`, `sso_role_name`, `region`, plus an `[sso-session ...]`
-block). If SSO is not logged in or the token is expired, the script prints
+block). `--region` is optional and defaults to the region of `--source`. If
+SSO is not logged in or the token is expired, the script prints
 `aws sso login --profile NAME` and exits 2.
 
 ### Prerequisites
 
-**Primary account (caller / `--source-profile`):**
+**Primary account (caller / `--source`):**
 
 - Credentials for the Agent Space owner (SSO profile).
 - Permission to call `aidevops:AssociateService` / `ListAssociations`.
@@ -57,7 +58,7 @@ block). If SSO is not logged in or the token is expired, the script prints
   Accounts](https://docs.aws.amazon.com/devopsagent/latest/userguide/configuring-integrations-and-knowledge-connecting-multiple-aws-accounts.html)
   and [SourceAwsConfiguration](https://docs.aws.amazon.com/devopsagent/latest/APIReference/API_SourceAwsConfiguration.html).
 
-**Each secondary (target) account (`--target-profile`):**
+**Each secondary (target) account (`--target`):**
 
 - SSO profile logged in.
 - Permission to `iam:CreateRole`, `iam:UpdateAssumeRolePolicy`,
@@ -138,8 +139,9 @@ a [uv inline script](https://docs.astral.sh/uv/guides/scripts/#declaring-script-
 (Python + boto3). Prefer it over a shell script: trust-policy JSON and
 idempotent IAM are simpler in Python.
 
-**Usual flags:** `--agent-space-id`, `--source-profile`, `--region`, one or
-more `--target-profile`, optional `--dry-run`.
+**Usual flags:** `--agent-space-id`, `--source`, one or more `--target`,
+optional `--region` (defaults to the `--source` profile region), optional
+`--dry-run`.
 
 **Tuning** (accepted; documented here only, not in `--help`):
 
@@ -148,16 +150,17 @@ more `--target-profile`, optional `--dry-run`.
 | `--role-name NAME` | IAM role name in each secondary (default `DevOpsAgentCrossAccountRole`) |
 | `--external-id ID` | Optional `externalId` on the secondary association |
 
-```bash
-# Preview
-./scripts/devops-agent-add-source.py --agent-space-id <SPACE_ID> \
-  --source-profile <PRIMARY_SSO> --region <REGION> \
-  --target-profile <SECONDARY_SSO> --dry-run
+**Examples:**
 
-# Multiple targets
+```bash
+# Preview (region from --source profile)
 ./scripts/devops-agent-add-source.py --agent-space-id <SPACE_ID> \
-  --source-profile <PRIMARY_SSO> --region <REGION> \
-  --target-profile <TARGET_A> --target-profile <TARGET_B>
+  --source <PRIMARY_SSO> --target <SECONDARY_SSO> --dry-run
+
+# Explicit region + multiple targets
+./scripts/devops-agent-add-source.py --agent-space-id <SPACE_ID> \
+  --source <PRIMARY_SSO> --region <REGION> \
+  --target <TARGET_A> --target <TARGET_B>
 
 # Apply: drop --dry-run
 ```
@@ -174,9 +177,11 @@ Entries from `list-associations` that lack account IDs are logged as warnings
 so skip logic never fails silently.
 
 Output (apply): one `ACCOUNT<TAB>ASSOCIATION_ID<TAB>STATUS` line per associate
-on stdout, then association rows from `list-associations`. Exit codes:
-`0` ok, `1` usage, `2` precondition / verification / AWS. Named SSO profiles
-only (env access keys refused). Requires [`uv`](https://docs.astral.sh/uv/).
+on stdout, then association rows from `list-associations`.
+
+**Exit codes:** `0` ok, `1` usage (including no region on `--source` and no
+`--region`), `2` precondition / verification / AWS. Named SSO profiles only
+(env access keys refused). Requires [`uv`](https://docs.astral.sh/uv/).
 
 ## References
 

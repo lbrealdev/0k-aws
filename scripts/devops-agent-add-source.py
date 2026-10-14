@@ -5,16 +5,7 @@
 #   "boto3>=1.40",
 # ]
 # ///
-"""Add secondary AWS accounts as sources to an existing DevOps Agent Space.
-
-SSO profiles only (--source-profile / --target-profile). Account IDs come
-from STS get_caller_identity via boto3.Session(profile_name=...).
-
-Per target: ensure cross-account IAM role (trust + AIDevOpsAgentAccessPolicy),
-then associate from the source profile via associate_service.
-
-Exit codes: 0 ok, 1 usage, 2 precondition / verification / AWS.
-"""
+"""Add AWS accounts as secondary sources via SSO profiles."""
 
 from __future__ import annotations
 
@@ -157,7 +148,7 @@ def reject_env_credentials() -> None:
     present = [name for name in ENV_CREDENTIAL_VARS if os.environ.get(name)]
     if present:
         die_usage(
-            "named SSO profiles only (--source-profile / --target-profile); "
+            "named SSO profiles only (--source / --target); "
             "unset " + " ".join(present)
         )
 
@@ -166,28 +157,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = ArgumentParser(
         prog=SCRIPT_NAME,
         usage=(
-            f"{SCRIPT_NAME} --agent-space-id ID --source-profile PROFILE "
-            f"--region REGION --target-profile PROFILE "
-            f"[--target-profile PROFILE ...] [--dry-run]"
+            f"{SCRIPT_NAME} --agent-space-id ID --source PROFILE "
+            f"--target PROFILE [--target PROFILE ...] "
+            f"[--region REGION] [--dry-run]"
         ),
-        description=(
-            "Add secondary AWS accounts as DevOps Agent sources "
-            "(SSO profiles only).\n"
-            "Account IDs come from STS on each named profile.\n"
-            "\n"
-            "Exit codes: 0 ok, 1 usage, 2 precondition/verification/AWS."
-        ),
+        description="Add AWS accounts as secondary sources via SSO profiles.",
         formatter_class=HelpFormatter,
         add_help=False,
-        epilog=(
-            "Examples:\n"
-            f"  {SCRIPT_NAME} --agent-space-id <SPACE_ID> \\\n"
-            "    --source-profile <PRIMARY_SSO> --region us-east-1 \\\n"
-            "    --target-profile <SECONDARY_SSO> --dry-run\n"
-            f"  {SCRIPT_NAME} --agent-space-id <SPACE_ID> \\\n"
-            "    --source-profile <PRIMARY_SSO> --region us-east-1 \\\n"
-            "    --target-profile <TARGET_A> --target-profile <TARGET_B>"
-        ),
     )
 
     required = p.add_argument_group("required")
@@ -200,27 +176,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Agent Space ID",
     )
     required.add_argument(
-        "--source-profile",
+        "--source",
         required=True,
         metavar="PROFILE",
         help="SSO profile for the primary account (owns the Agent Space)",
     )
     required.add_argument(
-        "--region",
-        required=True,
-        metavar="REGION",
-        help="Agent Space region (DevOps Agent Supported Region)",
-    )
-    required.add_argument(
-        "--target-profile",
+        "--target",
         action="append",
         required=True,
         metavar="PROFILE",
-        dest="target_profiles",
+        dest="targets",
         help="SSO profile for a secondary account (repeatable)",
     )
 
     optional = p.add_argument_group("optional")
+    optional.add_argument(
+        "--region",
+        metavar="REGION",
+        help="Agent Space region (default: region of --source)",
+    )
     optional.add_argument(
         "--dry-run",
         action="store_true",
@@ -706,37 +681,42 @@ def main(argv: list[str] | None = None) -> int:
 
     targets: list[str] = []
     seen: set[str] = set()
-    for profile in args.target_profiles:
+    for profile in args.targets:
         if profile not in seen:
             targets.append(profile)
             seen.add(profile)
 
     if not targets:
-        die_usage("provide at least one --target-profile")
+        die_usage("provide at least one --target")
 
     associated = 0
     skipped = 0
     failed = 0
 
     try:
-        ui.header(
-            f"{SCRIPT_NAME}  space={args.agent_space_id}  "
-            f"region={args.region}  dry_run={args.dry_run}"
-        )
-
         try:
-            primary = session_for_profile(args.source_profile, args.region)
-            primary_acct = resolve_account_id(primary, args.source_profile)
+            primary = session_for_profile(args.source, args.region)
+            region = args.region or primary.region_name
+            if not region:
+                die_usage(
+                    "no region: pass --region or set region on the "
+                    f"--source profile '{args.source}'"
+                )
+            primary_acct = resolve_account_id(primary, args.source)
         except VerificationError as exc:
             ui.fail("source", str(exc))
             ui.summary(0, 0, 1)
             return 2
 
-        ui.ok("source", f"{args.source_profile} account={primary_acct}")
+        ui.header(
+            f"{SCRIPT_NAME}  space={args.agent_space_id}  "
+            f"region={region}  dry_run={args.dry_run}"
+        )
+        ui.ok("source", f"{args.source} account={primary_acct}")
 
-        devops = primary.client(SERVICE_CLIENT, region_name=args.region)
+        devops = primary.client(SERVICE_CLIENT, region_name=region)
         space_id = args.agent_space_id
-        trust = trust_document(primary_acct, args.region, space_id)
+        trust = trust_document(primary_acct, region, space_id)
 
         try:
             known_associated = list_associated_account_ids(devops, space_id, ui)
@@ -793,8 +773,8 @@ def main(argv: list[str] | None = None) -> int:
                     account_id=account_id,
                     role_arn=role_arn,
                     external_id=args.external_id,
-                    region=args.region,
-                    profile=args.source_profile,
+                    region=region,
+                    profile=args.source,
                     dry_run=args.dry_run,
                     retry_on_iam_propagation=retry_iam and not args.dry_run,
                     ui=ui,
@@ -833,9 +813,9 @@ def main(argv: list[str] | None = None) -> int:
                         "--agent-space-id",
                         shell_quote(space_id),
                         "--profile",
-                        shell_quote(args.source_profile),
+                        shell_quote(args.source),
                         "--region",
-                        shell_quote(args.region),
+                        shell_quote(region),
                     ]
                 )
                 ui.dry("list", "list-associations")
