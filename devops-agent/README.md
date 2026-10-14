@@ -45,12 +45,16 @@ are skipped (same skip style as `find-iam-role.sh`).
 
 - Credentials for the Agent Space owner (SSO profile).
 - Permission to call `aidevops:AssociateService` / `ListAssociations`.
-- `iam:PassRole` on `arn:aws:iam::<PRIMARY_ACCOUNT_ID>:role/*` with
-  `iam:PassedToService` = `aidevops.amazonaws.com`. Without this,
-  `associate-service` for a secondary account fails with HTTP 403 naming
+- `iam:PassRole` on `arn:aws:iam::<PRIMARY_ACCOUNT_ID>:role/*` (the
+  caller's account role wildcard — not the secondary role ARN) with
+  `iam:PassedToService` = `aidevops.amazonaws.com`. AWS checks this on the
+  primary caller even though `assumableRoleArn` points at a role in the
+  secondary account; policies scoped to individual role ARNs do not satisfy
+  the check. Without it, `associate-service` fails with HTTP 403 naming
   `iam:PassRole`, even if the caller has `aidevops:*`. See [Connecting
   multiple AWS
-  Accounts](https://docs.aws.amazon.com/devopsagent/latest/userguide/configuring-integrations-and-knowledge-connecting-multiple-aws-accounts.html).
+  Accounts](https://docs.aws.amazon.com/devopsagent/latest/userguide/configuring-integrations-and-knowledge-connecting-multiple-aws-accounts.html)
+  and [SourceAwsConfiguration](https://docs.aws.amazon.com/devopsagent/latest/APIReference/API_SourceAwsConfiguration.html).
 - `--ou-id`: the primary profile must be the Organizations **management**
   account or a **delegated administrator** (the script calls
   `list-accounts-for-parent` with that profile).
@@ -136,25 +140,31 @@ a [uv inline script](https://docs.astral.sh/uv/guides/scripts/#declaring-script-
 (Python + boto3). Prefer it over a shell script: trust-policy JSON and
 idempotent IAM are simpler in Python.
 
-Required inputs match `associate-service`: `--agent-space-id`, a role ARN per
-account via `--role-name` (default `DevOpsAgentCrossAccountRole`), optional
-`--external-id`, plus `--profile` / `--region`.
+**Usual flags:** `--agent-space-id`, `--profile`, `--region`, one or more
+`ACCOUNT_ID`s and/or `--ou-id`, optional `--dry-run`.
+
+**Advanced** (accepted; see `--help` pointer to this section):
+
+| Flag | Purpose |
+|------|---------|
+| `--role-name NAME` | IAM role name in each secondary (default `DevOpsAgentCrossAccountRole`) |
+| `--target-profile ACCOUNT=PROFILE` | Map account → SSO profile when config discovery is missing/ambiguous (repeatable) |
+| `--external-id ID` | Optional `externalId` on the secondary association |
 
 ```bash
 # Preview: explicit accounts
-./scripts/devops-agent-add-source.py --agent-space-id <AGENT_SPACE_ID> \
-  --role-name DevOpsAgentCrossAccountRole \
+./scripts/devops-agent-add-source.py --agent-space-id <SPACE_ID> \
   --profile <PRIMARY_SSO> --region <REGION> \
   --dry-run <ACCOUNT_ID> [<ACCOUNT_ID>...]
 
 # Preview: ACTIVE accounts under an OU (skips already associated;
 # primary profile must be Organizations management or delegated admin)
-./scripts/devops-agent-add-source.py --agent-space-id <AGENT_SPACE_ID> \
+./scripts/devops-agent-add-source.py --agent-space-id <SPACE_ID> \
   --profile <PRIMARY_SSO> --region <REGION> \
   --ou-id <OU_ID> --dry-run
 
-# Optional explicit map when sso_account_id is missing or ambiguous
-./scripts/devops-agent-add-source.py --agent-space-id <AGENT_SPACE_ID> \
+# Advanced: explicit profile map
+./scripts/devops-agent-add-source.py --agent-space-id <SPACE_ID> \
   --profile <PRIMARY_SSO> --region <REGION> \
   --target-profile 111122223333=my-sso-profile --dry-run 111122223333
 
@@ -162,13 +172,13 @@ account via `--role-name` (default `DevOpsAgentCrossAccountRole`), optional
 ```
 
 `--dry-run` still uses SSO to decide create vs update, but only prints the
-`iam create-role` / `update-assume-role-policy` / `attach-role-policy`,
-`devops-agent associate-service`, and final `list-associations` commands.
+IAM / associate-service / list-associations commands.
 
-When a role was just created, `associate_service` retries briefly with backoff
-(IAM eventual consistency). Entries from `list-associations` that lack
-`configuration.sourceAws/aws.accountId` are logged as warnings so skip logic
-never fails silently.
+When a role was just created or its trust policy was just updated,
+`associate_service` retries briefly with backoff (IAM eventual consistency).
+Missing `iam:PassRole` fails immediately with a clear error (no long retry).
+Entries from `list-associations` that lack account IDs are logged as warnings
+so skip logic never fails silently.
 
 Output (apply): one `ACCOUNT<TAB>ASSOCIATION_ID<TAB>STATUS` line per associate,
 then association rows from `list-associations`. Exit codes ([AGENTS.md](../AGENTS.md)):

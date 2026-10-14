@@ -50,9 +50,28 @@ SERVICE_PRINCIPAL = "aidevops.amazonaws.com"
 AWS_CONFIG_FILE = Path(
     os.environ.get("AWS_CONFIG_FILE", Path.home() / ".aws" / "config")
 )
-# Bounded retry after create_role: IAM eventual consistency.
+# Bounded retry after create_role / trust update: IAM eventual consistency.
 ASSOCIATE_RETRY_ATTEMPTS = 5
 ASSOCIATE_RETRY_BASE_SECONDS = 2.0
+# list-associations can lag briefly after a successful associate_service.
+VERIFY_LIST_ATTEMPTS = 5
+VERIFY_LIST_BASE_SECONDS = 1.0
+
+
+class HelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Show long option names only (short aliases still work)."""
+
+    def _format_action_invocation(self, action: argparse.Action) -> str:
+        if not action.option_strings:
+            return super()._format_action_invocation(action)
+        longs = [o for o in action.option_strings if o.startswith("--")]
+        if not longs:
+            longs = list(action.option_strings)
+        if action.nargs == 0:
+            return ", ".join(longs)
+        default = self._get_default_metavar_for_optional(action)
+        args_string = self._format_args(action, default)
+        return ", ".join(f"{opt} {args_string}" for opt in longs)
 
 
 class ArgumentParser(argparse.ArgumentParser):
@@ -90,81 +109,91 @@ def reject_env_credentials() -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = ArgumentParser(
         prog=SCRIPT_NAME,
-        description=(
-            "Ensure the DevOps Agent cross-account role in each secondary "
-            "account (SSO profile), then associate it as a source on an "
-            "existing Agent Space."
+        usage=(
+            f"{SCRIPT_NAME} --agent-space-id ID --profile PROFILE "
+            f"--region REGION [--dry-run] "
+            f"(ACCOUNT_ID... | --ou-id OU)"
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Add secondary AWS accounts as DevOps Agent sources "
+            "(SSO profiles only).\n"
+            "Pass at least one ACCOUNT_ID and/or --ou-id."
+        ),
+        formatter_class=HelpFormatter,
         epilog=(
             "Examples:\n"
-            f"  {SCRIPT_NAME} --agent-space-id SPACE --role-name ROLE \\\n"
-            "    --profile primary --region us-east-1 --dry-run 111122223333\n"
-            f"  {SCRIPT_NAME} --agent-space-id SPACE --role-name ROLE \\\n"
-            "    --profile primary --region us-east-1 --ou-id ou-xxxx --dry-run\n"
+            f"  {SCRIPT_NAME} --agent-space-id <SPACE_ID> \\\n"
+            "    --profile <PRIMARY_SSO> --region us-east-1 \\\n"
+            "    --dry-run 111122223333\n"
+            f"  {SCRIPT_NAME} --agent-space-id <SPACE_ID> \\\n"
+            "    --profile <PRIMARY_SSO> --region us-east-1 \\\n"
+            "    --ou-id ou-xxxx --dry-run\n"
             "\n"
-            "Region must be a DevOps Agent Supported Region for the Agent Space.\n"
+            "Advanced flags (--role-name, --target-profile, --external-id): "
+            "see devops-agent/README.md."
         ),
     )
-    p.add_argument(
+
+    required = p.add_argument_group("required")
+    required.add_argument(
         "--agent-space-id",
         "-s",
         required=True,
+        metavar="ID",
         dest="agent_space_id",
-        help="Existing Agent Space ID (maps to associate-service --agent-space-id)",
+        help="Agent Space ID",
     )
+    required.add_argument(
+        "--profile",
+        "-p",
+        required=True,
+        metavar="PROFILE",
+        help="Primary SSO profile (owns the Agent Space)",
+    )
+    required.add_argument(
+        "--region",
+        required=True,
+        metavar="REGION",
+        help="Agent Space region (DevOps Agent Supported Region)",
+    )
+
+    targets = p.add_argument_group("targets (need at least one)")
+    targets.add_argument(
+        "accounts",
+        nargs="*",
+        metavar="ACCOUNT_ID",
+        help="Secondary account ID(s)",
+    )
+    targets.add_argument(
+        "--ou-id",
+        metavar="OU",
+        help="All ACTIVE accounts in this OU (Orgs admin profile)",
+    )
+    targets.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print planned changes; write nothing",
+    )
+
+    # Kept working; documented in README (hidden here to keep --help short).
     p.add_argument(
         "--role-name",
         "-r",
         default=DEFAULT_ROLE_NAME,
-        help=(
-            "IAM role name in each secondary account; used to build "
-            f"assumableRoleArn (default: {DEFAULT_ROLE_NAME})"
-        ),
-    )
-    p.add_argument(
-        "--profile",
-        "-p",
-        required=True,
-        help="Primary account SSO profile (Agent Space owner)",
-    )
-    p.add_argument(
-        "--region",
-        required=True,
-        help=(
-            "Agent Space region (required; DevOps Agent is not available in "
-            "every region — see Supported Regions)"
-        ),
-    )
-    p.add_argument(
-        "--ou-id",
-        help=(
-            "Add ACTIVE accounts under this Organizations OU "
-            "(skips already associated; primary profile must be the "
-            "Organizations management or delegated admin account)"
-        ),
-    )
-    p.add_argument(
-        "accounts",
-        nargs="*",
-        metavar="ACCOUNT_ID",
-        help="Explicit secondary account IDs",
+        metavar="NAME",
+        help=argparse.SUPPRESS,
     )
     p.add_argument(
         "--target-profile",
         action="append",
         default=[],
         metavar="ACCOUNT=PROFILE",
-        help="Explicit account-to-SSO-profile map (repeatable; overrides config)",
+        help=argparse.SUPPRESS,
     )
     p.add_argument(
         "--external-id",
-        help="Optional externalId for sourceAws association",
-    )
-    p.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print IAM, associate-service, and list-associations calls; change nothing",
+        metavar="ID",
+        help=argparse.SUPPRESS,
     )
     return p.parse_args(argv)
 
@@ -369,22 +398,53 @@ def verify_prior_associations_retained(
 
     associate-service docs say it overwrites the association of the same
     service; CLI onboarding implies sourceAws associations can accumulate.
-    Until a multi-account sandbox run confirms accumulation, check that every
-    previously listed account (plus the one just added) remains.
+    Until a multi-account sandbox run confirms accumulation, require that every
+    previously listed account remains. The newly added account may lag in
+    list-associations, so poll briefly for it before failing.
     """
     current = list_associated_account_ids(devops, space_id)
-    expected = set(prior)
-    expected.add(just_added)
-    missing = sorted(expected - current)
-    if missing:
+    missing_prior = sorted(prior - current)
+    if missing_prior:
         die(
             "associate-service appears to have dropped prior associations "
-            f"(missing accountIds: {', '.join(missing)}). "
+            f"(missing accountIds: {', '.join(missing_prior)}). "
             "CLI docs warn that associate-service overwrites the existing "
             "association of the same service; refuse to continue. "
             "Verify multi-account behavior before re-running.",
             2,
         )
+
+    if just_added in current:
+        return
+
+    for attempt in range(1, VERIFY_LIST_ATTEMPTS + 1):
+        delay = VERIFY_LIST_BASE_SECONDS * (2 ** (attempt - 1))
+        warn(
+            f"list_associations does not yet include {just_added} "
+            f"(attempt {attempt}/{VERIFY_LIST_ATTEMPTS}); "
+            f"retrying in {delay:.0f}s"
+        )
+        time.sleep(delay)
+        current = list_associated_account_ids(devops, space_id)
+        missing_prior = sorted(prior - current)
+        if missing_prior:
+            die(
+                "associate-service appears to have dropped prior associations "
+                f"(missing accountIds: {', '.join(missing_prior)}). "
+                "CLI docs warn that associate-service overwrites the existing "
+                "association of the same service; refuse to continue. "
+                "Verify multi-account behavior before re-running.",
+                2,
+            )
+        if just_added in current:
+            return
+
+    die(
+        f"associate-service succeeded for {just_added}, but "
+        f"list-associations still does not list that accountId after "
+        f"{VERIFY_LIST_ATTEMPTS} polls. Check the Agent Space manually.",
+        2,
+    )
 
 
 def verify_list_associations(
@@ -438,9 +498,9 @@ def ensure_cross_account_role(
 ) -> tuple[str, bool]:
     """Create or update the role; attach managed policy.
 
-    Returns (role_arn, created_new). created_new is True when create_role ran
-    (or would run in dry-run), so callers can retry associate_service for IAM
-    propagation.
+    Returns (role_arn, retry_associate_for_iam). The flag is True when
+    create_role or update_assume_role_policy ran (or would in dry-run), so
+    callers can retry associate_service for IAM propagation.
     """
     trust_json = json.dumps(trust)
     role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
@@ -491,6 +551,7 @@ def ensure_cross_account_role(
     if isinstance(current_trust, str):
         current_trust = json.loads(current_trust)
 
+    trust_updated = False
     if canonical_json(current_trust) != canonical_json(trust):
         cmd = [
             "aws",
@@ -504,12 +565,14 @@ def ensure_cross_account_role(
         ]
         if dry_run:
             print_cmd(cmd)
+            trust_updated = True
         else:
             iam.update_assume_role_policy(
                 RoleName=role_name,
                 PolicyDocument=trust_json,
             )
             log(f"updated trust policy on {role_name}")
+            trust_updated = True
     else:
         log(f"role exists with matching trust: {role_name}")
 
@@ -535,24 +598,60 @@ def ensure_cross_account_role(
         else:
             iam.attach_role_policy(RoleName=role_name, PolicyArn=MANAGED_POLICY_ARN)
             log(f"attached {MANAGED_POLICY_ARN}")
-    return role_arn, False
+    return role_arn, trust_updated
+
+
+def _client_error_message(exc: ClientError) -> str:
+    err_obj = exc.response.get("Error") or {}
+    return str(err_obj.get("Message") or exc)
+
+
+def _is_passrole_denied(exc: BaseException) -> bool:
+    if not isinstance(exc, ClientError):
+        return False
+    code = (exc.response.get("Error") or {}).get("Code", "")
+    msg = _client_error_message(exc).lower()
+    if "passrole" in msg or "iam:passrole" in msg:
+        return True
+    # AccessDenied naming PassRole is the documented secondary-account failure.
+    return code in ("AccessDeniedException", "AccessDenied") and "passrole" in msg
+
+
+def passrole_denied_message(exc: BaseException) -> str:
+    return (
+        "associate_service failed: missing iam:PassRole on the primary "
+        "caller for arn:aws:iam::<PRIMARY_ACCOUNT_ID>:role/* with "
+        "iam:PassedToService=aidevops.amazonaws.com (required even though "
+        "assumableRoleArn is in the secondary account). "
+        f"AWS error: {exc}"
+    )
 
 
 def _is_retryable_associate_error(exc: BaseException) -> bool:
+    """Retry only propagation / transient cases — not PassRole denials."""
+    if _is_passrole_denied(exc):
+        return False
     if isinstance(exc, ClientError):
-        code = exc.response.get("Error", {}).get("Code", "")
-        # Fresh roles are often not assumable for a few seconds.
+        code = (exc.response.get("Error") or {}).get("Code", "")
         if code in (
-            "AccessDeniedException",
-            "InvalidRequestException",
             "ConflictException",
             "ThrottlingException",
             "TooManyRequestsException",
             "ServiceUnavailableException",
         ):
             return True
-        msg = str(exc).lower()
-        if "assum" in msg or "propagat" in msg or "not ready" in msg:
+        msg = _client_error_message(exc).lower()
+        # Role/trust just written; service may need a moment to assume it.
+        if any(
+            needle in msg
+            for needle in (
+                "assum",
+                "propagat",
+                "not ready",
+                "not yet",
+                "eventually",
+            )
+        ):
             return True
     return False
 
@@ -616,6 +715,16 @@ def associate_source(
             return assoc.get("associationId", ""), assoc.get("status", "")
         except (ClientError, BotoCoreError) as exc:
             last_exc = exc
+            if _is_passrole_denied(exc):
+                raise ClientError(
+                    {
+                        "Error": {
+                            "Code": "AccessDeniedException",
+                            "Message": passrole_denied_message(exc),
+                        }
+                    },
+                    "AssociateService",
+                ) from exc
             if attempt >= attempts or not _is_retryable_associate_error(exc):
                 raise
             delay = ASSOCIATE_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
@@ -758,7 +867,7 @@ def main(argv: list[str] | None = None) -> int:
             log(f"processing {account_id} via profile {profile}")
             try:
                 iam = session_for_profile(profile).client("iam")
-                role_arn, created_new = ensure_cross_account_role(
+                role_arn, retry_iam = ensure_cross_account_role(
                     iam=iam,
                     account_id=account_id,
                     role_name=args.role_name,
@@ -778,7 +887,7 @@ def main(argv: list[str] | None = None) -> int:
                     region=args.region,
                     profile=args.profile,
                     dry_run=args.dry_run,
-                    retry_on_iam_propagation=created_new and not args.dry_run,
+                    retry_on_iam_propagation=retry_iam and not args.dry_run,
                 )
                 if result is not None:
                     assoc_id, status = result
