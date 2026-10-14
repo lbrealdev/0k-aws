@@ -115,7 +115,7 @@ idempotent IAM are simpler in Python.
 `devops-agent associate-service` commands.
 
 Output (apply): one `ACCOUNT<TAB>ASSOCIATION_ID<TAB>STATUS` line per account.
-Exit codes: `0` success, `1` usage, `2` AWS error. Requires [`uv`](https://docs.astral.sh/uv/).
+Exit codes: `0` success, `2` usage or AWS error. Requires [`uv`](https://docs.astral.sh/uv/).
 Works on Linux and Git Bash (`\r` stripped when reading `~/.aws/config`).
 
 ## References
