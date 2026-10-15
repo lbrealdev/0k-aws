@@ -2,18 +2,30 @@
 
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# Resolve lib/ui.sh from this script's path, walking parents.
+_ui_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+_ui_path=""
+while [ -n "$_ui_dir" ]; do
+    if [ -f "$_ui_dir/lib/ui.sh" ]; then
+        _ui_path="$_ui_dir/lib/ui.sh"
+        break
+    fi
+    [ "$_ui_dir" = "/" ] && break
+    _ui_dir="$(dirname -- "$_ui_dir")"
+done
+if [ -z "$_ui_path" ]; then
+    printf 'Error: lib/ui.sh not found (copy lib/ with the repo layout)\n' >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+. "$_ui_path"
 
 info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    ui_row "$(ui_color blue)[INFO]$(ui_color reset) $*"
 }
 
 error() {
-    echo -e "${RED}[ERROR]${NC} $1" >&2
+    ui_always "$(ui_color red)[ERROR]$(ui_color reset) $*"
 }
 
 check_dependencies() {
@@ -30,11 +42,12 @@ check_dependencies() {
 
 validate_auth() {
     local profile="$1"
-    local profile_arg=""
-    [[ -n "$profile" ]] && profile_arg="--profile $profile"
-    
+    local -a args=(sts get-caller-identity)
+    [[ -n "$profile" ]] && args+=(--profile "$profile")
+    args+=(--output json)
+
     local result
-    if ! result=$(aws sts get-caller-identity $profile_arg --output json 2>&1); then
+    if ! result=$(aws "${args[@]}" 2>&1); then
         if [[ -n "$profile" ]]; then
             error "Profile '$profile' not authenticated"
             error "Run: aws sso login --profile $profile"
@@ -50,48 +63,31 @@ validate_auth() {
 
 get_profile_region() {
     local profile="$1"
-    local profile_arg=""
-    [[ -n "$profile" ]] && profile_arg="--profile $profile"
+    local -a args=(configure get region)
+    [[ -n "$profile" ]] && args+=(--profile "$profile")
     
-    aws configure get region $profile_arg 2>/dev/null || true
+    aws "${args[@]}" 2>/dev/null || true
 }
 
 usage() {
     cat << EOF
 Usage: $0 [OPTIONS]
 
-Lists all AWS resources in the account using Resource Groups Tagging API.
+List all AWS resources in the account using the Resource Groups Tagging API.
 
-Optional arguments:
-  --region, -r           AWS region (required if not configured in profile)
-  --profile, -p          AWS profile name (can be used multiple times)
-  --profiles             Comma-separated AWS profile names
-  --report               Save output to files instead of stdout
-  --report-dir           Custom report directory (default: report/)
-  --output, -o           Output format: text or table (default: text)
-  --help, -h             Show this help message
-
-Authentication:
-  - Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN
-  - SSO profiles: export AWS_PROFILE=<profile> then aws sso login
-  - Credential files: ~/.aws/credentials and ~/.aws/config
+Options:
+  -r, --region REGION    AWS region (required if not in the profile)
+  -p, --profile NAME     AWS profile name (repeatable)
+      --profiles LIST    Comma-separated AWS profile names
+      --report           Save output to files instead of stdout
+      --report-dir DIR   Report directory (default: report/)
+  -o, --output FORMAT    text or table (default: text)
+  -q, --quiet            Suppress the header and non-error status rows
+  -h, --help             Show this help message
 
 Examples:
-  # List resources using current auth (env vars or exported AWS_PROFILE)
   $0 --region us-east-1
-
-  # List resources for specific profile
-  $0 --profile dev
-
-  # List resources for multiple profiles (switches between them)
-  $0 --profiles dev,staging,prod
-
-  # Generate report for multiple profiles
-  $0 --profiles dev,staging,prod --report
-
-  # Override region for all profiles
-  $0 --profiles dev,staging --region us-east-1
-
+  $0 --profiles dev,staging --report
 EOF
 }
 
@@ -139,18 +135,6 @@ while [[ $# -gt 0 ]]; do
                 shift 2
             fi
             ;;
-        --profile|-p)
-            if [[ "$1" == --*=* ]]; then
-                PROFILES+=("${1#*=}")
-                shift
-            elif [[ -z "${2:-}" || "$2" == --* ]]; then
-                error "Option --profile requires a value"
-                exit 1
-            else
-                PROFILES+=("$2")
-                shift 2
-            fi
-            ;;
         --profiles)
             if [[ -z "${2:-}" || "$2" == --* ]]; then
                 error "Option --profiles requires a value"
@@ -176,21 +160,13 @@ while [[ $# -gt 0 ]]; do
             REPORT_DIR="$2"
             shift 2
             ;;
-        --output|-o)
-            if [[ "$1" == --*=* ]]; then
-                OUTPUT="${1#*=}"
-                shift
-            elif [[ -z "${2:-}" || "$2" == --* ]]; then
-                error "Option --output requires a value"
-                exit 1
-            else
-                OUTPUT="$2"
-                shift 2
-            fi
-            ;;
         --help|-h)
             usage
             exit 0
+            ;;
+        -q|--quiet)
+            ui_quiet
+            shift
             ;;
         *)
             error "Unknown option: $1"
@@ -218,8 +194,9 @@ list_resources() {
     local profile="$1"
     local target_region="$2"
     
-    local profile_arg=""
-    [[ -n "$profile" ]] && profile_arg="--profile $profile"
+    local -a base_cmd=(aws resourcegroupstaggingapi get-resources)
+    [[ -n "$profile" ]] && base_cmd+=(--profile "$profile")
+    base_cmd+=(--region "$target_region" --output json --no-cli-pager)
     
     local arns=()
     local pagination_token=""
@@ -229,13 +206,13 @@ list_resources() {
         page_count=$((page_count + 1))
         
         local response
-        local aws_cmd="aws resourcegroupstaggingapi get-resources $profile_arg --region $target_region --output json --no-cli-pager"
+        local -a aws_cmd=("${base_cmd[@]}")
         
         if [[ -n "$pagination_token" ]]; then
-            aws_cmd="$aws_cmd --pagination-token $pagination_token"
+            aws_cmd+=(--pagination-token "$pagination_token")
         fi
         
-        if ! response=$($aws_cmd 2>&1); then
+        if ! response=$("${aws_cmd[@]}" 2>&1); then
             error "Failed to retrieve resources from AWS"
             error "Response: $response"
             return 1
@@ -331,6 +308,7 @@ generate_summary() {
 }
 
 main() {
+    ui_header "list-resources: account resources via Resource Groups Tagging API"
     check_dependencies
     
     local summaries=()

@@ -2,6 +2,24 @@
 
 set -euo pipefail
 
+# Resolve lib/ui.sh from this script's path, walking parents.
+_ui_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+_ui_path=""
+while [ -n "$_ui_dir" ]; do
+    if [ -f "$_ui_dir/lib/ui.sh" ]; then
+        _ui_path="$_ui_dir/lib/ui.sh"
+        break
+    fi
+    [ "$_ui_dir" = "/" ] && break
+    _ui_dir="$(dirname -- "$_ui_dir")"
+done
+if [ -z "$_ui_path" ]; then
+    printf 'Error: lib/ui.sh not found (copy lib/ with the repo layout)\n' >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+. "$_ui_path"
+
 # Read-only: list RDS instance and cluster snapshots with age in days.
 
 PROFILE=""
@@ -14,25 +32,25 @@ usage() {
 Usage: $0 [OPTIONS]
 
 List RDS DB and cluster snapshots with age in days (UTC). Read-only.
-Does not delete snapshots. Complements the RDS deletion checklist:
-manual snapshots persist after instance delete and incur storage cost.
 
 Rows with AGE_DAYS >= --min-age are flagged OLD=yes.
 
 Options:
-  --profile, -p NAME         AWS CLI profile
-  --region, -r REGION        AWS region
-  --min-age DAYS             Flag snapshots this old or older
-                             (default: 30)
-  --snapshot-type TYPE       automated, manual, or all
-                             (default: all)
-  --help, -h                 Show this help message
+  -p, --profile NAME      AWS CLI profile
+  -r, --region REGION     AWS region
+      --min-age DAYS      Flag snapshots this old or older (default: 30)
+      --snapshot-type T   automated, manual, or all (default: all)
+  -q, --quiet             Suppress the header and non-error status rows
+  -h, --help              Show this help message
 
+Examples:
+  $0 --profile prod --region us-east-1
+  $0 --min-age 90 --snapshot-type manual
 EOF
 }
 
-error() { echo "[ERROR] $*" >&2; }
-info()  { echo "[INFO]  $*" >&2; }
+error() { ui_always "$(ui_color red)[ERROR]$(ui_color reset) $*"; }
+info()  { ui_row "$(ui_color blue)[INFO]$(ui_color reset)  $*"; }
 
 _col_width() {
     local current="$1"
@@ -181,15 +199,19 @@ main() {
                 SNAPSHOT_TYPE="$2"
                 shift 2
                 ;;
-            --help|-h)
-                usage
-                exit 0
-                ;;
-            *)
-                error "unknown option: $1"
-                usage >&2
-                exit 1
-                ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        -q|--quiet)
+            ui_quiet
+            shift
+            ;;
+        *)
+            error "unknown option: $1"
+            usage >&2
+            exit 1
+            ;;
         esac
     done
 
@@ -207,6 +229,8 @@ main() {
 
     check_dependencies
 
+    ui_header "rds-snapshot-age: RDS snapshot ages (read-only)"
+
     local db_json cluster_json
     if ! db_json=$(aws_json rds describe-db-snapshots); then
         error "rds describe-db-snapshots failed"
@@ -219,7 +243,7 @@ main() {
 
     local rows=()
     local old_count=0
-    local line kind id engine stype created enc age old
+    local kind id engine stype created enc age old
 
     while IFS=$'\t' read -r kind id engine stype created enc; do
         [ -z "$kind" ] && continue

@@ -2,6 +2,24 @@
 
 set -euo pipefail
 
+# Resolve lib/ui.sh from this script's path, walking parents.
+_ui_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+_ui_path=""
+while [ -n "$_ui_dir" ]; do
+    if [ -f "$_ui_dir/lib/ui.sh" ]; then
+        _ui_path="$_ui_dir/lib/ui.sh"
+        break
+    fi
+    [ "$_ui_dir" = "/" ] && break
+    _ui_dir="$(dirname -- "$_ui_dir")"
+done
+if [ -z "$_ui_path" ]; then
+    printf 'Error: lib/ui.sh not found (copy lib/ with the repo layout)\n' >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+. "$_ui_path"
+
 # Platform note: Git Bash / MSYS may emit CRLF from external commands.
 # Always sanitize captured values with strip_cr before compare/parse/store.
 strip_cr() {
@@ -24,12 +42,6 @@ detect_platform() {
     fi
 }
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
 timestamp() {
     date '+%H:%M:%S'
 }
@@ -45,19 +57,19 @@ elapsed_since() {
 
 info() {
     # stderr so command substitutions / json|csv stdout stay clean
-    echo -e "${BLUE}[$(timestamp)] [INFO]${NC} $1" >&2
+    ui_row "[$(timestamp)] $(ui_color blue)[INFO]$(ui_color reset) $*"
 }
 
 success() {
-    echo -e "${GREEN}[$(timestamp)] [SUCCESS]${NC} $1" >&2
+    ui_row "[$(timestamp)] $(ui_color green)[SUCCESS]$(ui_color reset) $*"
 }
 
 warning() {
-    echo -e "${YELLOW}[$(timestamp)] [WARNING]${NC} $1" >&2
+    ui_always "[$(timestamp)] $(ui_color yellow)[WARNING]$(ui_color reset) $*"
 }
 
 error() {
-    echo -e "${RED}[$(timestamp)] [ERROR]${NC} $1" >&2
+    ui_always "[$(timestamp)] $(ui_color red)[ERROR]$(ui_color reset) $*"
 }
 
 JSON_WORKSPACE=""
@@ -150,30 +162,27 @@ check_aws_auth() {
 
 usage() {
     cat << EOF
-Usage: $0 --instance <instance-id>[,<instance-id>...] [OPTIONS]
+Usage: $0 --instance <id>[,<id>...] [OPTIONS]
 
-Read-only, instance-scoped inventory report for EC2 elimination:
-  volumes (including leftovers), snapshots, AMIs, DLM policies, and AWS Backup recovery points.
-  Correlates related resources by instance/volume IDs and tags, then writes a report.
+Read-only, instance-scoped inventory for EC2 elimination: volumes,
+snapshots, AMIs, DLM policies, and AWS Backup recovery points.
 
-Required arguments:
-  --instance, -i     One or more instance IDs (repeatable or comma-separated)
+Required:
+  -i, --instance ID     Instance ID (repeatable or comma-separated)
 
-Optional arguments:
-  --region, -r       AWS region
-  --profile, -p      AWS profile name
-  --format, -f       Report format: json or csv (default: json)
-  --report-dir       Custom report directory (default: report/ec2-inventory-<timestamp>)
-  --skip-backup      Skip AWS Backup recovery-point enumeration
-  --skip-dlm         Skip Data Lifecycle Manager policies
-  --help, -h         Show this help message
+Options:
+  -r, --region REGION   AWS region
+  -p, --profile NAME    AWS profile name
+  -f, --format FORMAT   json or csv (default: json)
+      --report-dir DIR  Report directory
+      --skip-backup     Skip AWS Backup recovery points
+      --skip-dlm        Skip Data Lifecycle Manager policies
+  -q, --quiet           Suppress the header and non-error status rows
+  -h, --help            Show this help message
 
 Examples:
   $0 -i i-0123456789abcdef0 --region us-east-1
   $0 -i i-aaa,i-bbb --profile prod -f json
-  $0 -i i-aaa -i i-bbb -f csv
-  $0 -i i-aaa --skip-dlm --report-dir ./out/ec2-elim
-
 EOF
 }
 
@@ -252,6 +261,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-dlm)
             SKIP_DLM=true
+            shift
+            ;;
+        -q|--quiet)
+            ui_quiet
             shift
             ;;
         --help|-h)
@@ -361,8 +374,8 @@ collect_volumes_for_instance() {
         ids="$(printf '%s' "$volume_ids_json" | jq -r '.[]' | tr '\n' ' ' | tr -d '\r')"
         if [[ -n "${ids//[[:space:]]/}" ]]; then
             # Intentionally unquoted expansion of volume ids for AWS CLI
-            # shellcheck disable=SC2086
             info "    Querying volumes by BDM IDs..."
+            # shellcheck disable=SC2086
             volumes_by_id="$(aws_json_quiet ec2 describe-volumes --volume-ids $ids \
                 | jq -c '.Volumes // []' || echo '[]')"
             info "    BDM-described volumes: $(printf '%s' "$volumes_by_id" | jq 'length')"
@@ -863,16 +876,12 @@ print_completion_summary() {
     info "See ec2/elimination.md for the elimination checklist"
 }
 
-print_banner() {
-    echo "" >&2
-    echo "╔════════════════════════════════════════════════════════╗" >&2
-    echo "║     EC2 INSTANCE BACKUP / ELIMINATION INVENTORY        ║" >&2
-    echo "╚════════════════════════════════════════════════════════╝" >&2
-    echo "" >&2
+print_header() {
+    ui_header "ec2-inventory: read-only EC2 elimination inventory"
 }
 
 main() {
-    print_banner
+    print_header
     detect_platform
     info "Platform: $PLATFORM"
 

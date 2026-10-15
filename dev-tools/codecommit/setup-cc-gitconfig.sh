@@ -5,6 +5,24 @@
 
 set -eEuo pipefail
 
+# Resolve lib/ui.sh from this script's path, walking parents.
+_ui_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+_ui_path=""
+while [ -n "$_ui_dir" ]; do
+    if [ -f "$_ui_dir/lib/ui.sh" ]; then
+        _ui_path="$_ui_dir/lib/ui.sh"
+        break
+    fi
+    [ "$_ui_dir" = "/" ] && break
+    _ui_dir="$(dirname -- "$_ui_dir")"
+done
+if [ -z "$_ui_path" ]; then
+    printf 'Error: lib/ui.sh not found (copy lib/ with the repo layout)\n' >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+. "$_ui_path"
+
 BACKUP_DIR="${HOME}/gitconfig-backups"
 DO_FIX_SYSTEM=0
 DO_MIGRATE=0
@@ -16,33 +34,38 @@ print_help() {
   cat <<EOF
 Usage: $(basename "$0") [options]
 
-Prepare Git for CodeCommit HTTPS with AWS CLI credential-helper
-(no GCM username/password dialog). Default is check-only.
-Mutating flags back up configs first.
+Prepare Git for CodeCommit HTTPS with the AWS CLI credential-helper
+(no GCM username/password dialog). Default is check-only. Mutating
+flags back up configs first.
 
 Options:
-  --fix-system       Remove GCM (manager) helper values from the system
-                     credential.helper, preserving other helpers (if writable)
-  --migrate          Merge system settings into existing global (skip GCM),
-                     append GIT_CONFIG_NOSYSTEM=1 to existing ~/.bashrc
-                     Requires ~/.gitconfig and ~/.bashrc (does not create them)
-  --backup-dir DIR   Backup directory (default: ~/gitconfig-backups)
-  -h, --help         Show this help and exit
+      --fix-system     Remove GCM helpers from the system credential.helper
+      --migrate        Merge system settings into global (skip GCM)
+      --backup-dir DIR Backup directory (default: ~/gitconfig-backups)
+  -q, --quiet          Suppress the banner and non-error status rows
+  -h, --help           Show this help and exit
 
-Exit codes:
-  0  No effective manager/manager-core helper, or --migrate succeeded
-  1  Effective manager still active (see Recommendation)
-  2  Usage error, missing prereqs, git missing, or unexpected failure
+Exit: 0 ok, 1 manager still active, 2 usage/prereq error
 
-Policy:
-  1) Writable system  -> remove GCM helpers from system credential.helper (--fix-system)
-  2) Read-only system -> --migrate (merge system->global, enable NOSYSTEM in ~/.bashrc)
+Examples:
+  $(basename "$0")
+  $(basename "$0") --migrate
 EOF
 }
 
-log() { printf '%s\n' "$*"; }
-warn() { printf 'WARN: %s\n' "$*" >&2; }
-err() { printf 'ERROR: %s\n' "$*" >&2; }
+print_banner() {
+  ui_banner <<'EOF'
+
+╔════════════════════════════════════════════════════════╗
+║        AWS CODECOMMIT GIT CONFIG SETUP                 ║
+╚════════════════════════════════════════════════════════╝
+
+EOF
+}
+
+log()  { ui_row "$*"; }
+warn() { ui_always "$(ui_color yellow)WARN:$(ui_color reset) $*"; }
+err()  { ui_always "$(ui_color red)ERROR:$(ui_color reset) $*"; }
 
 trap 'err "Unexpected failure on line $LINENO"; exit 2' ERR
 
@@ -405,6 +428,10 @@ parse_args() {
         print_help
         exit 0
         ;;
+      -q|--quiet)
+        ui_quiet
+        shift
+        ;;
       --fix-system)
         DO_FIX_SYSTEM=1
         shift
@@ -423,7 +450,7 @@ parse_args() {
         ;;
       *)
         err "Unknown option: $1"
-        print_help
+        print_help >&2
         exit 2
         ;;
     esac
@@ -437,6 +464,8 @@ parse_args() {
 
 main() {
   parse_args "$@"
+
+  print_banner
 
   if ! command -v git >/dev/null 2>&1; then
     err "git is not installed or not on PATH"

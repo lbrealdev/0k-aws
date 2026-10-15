@@ -2,6 +2,24 @@
 
 set -euo pipefail
 
+# Resolve lib/ui.sh from this script's path, walking parents.
+_ui_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+_ui_path=""
+while [ -n "$_ui_dir" ]; do
+    if [ -f "$_ui_dir/lib/ui.sh" ]; then
+        _ui_path="$_ui_dir/lib/ui.sh"
+        break
+    fi
+    [ "$_ui_dir" = "/" ] && break
+    _ui_dir="$(dirname -- "$_ui_dir")"
+done
+if [ -z "$_ui_path" ]; then
+    printf 'Error: lib/ui.sh not found (copy lib/ with the repo layout)\n' >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+. "$_ui_path"
+
 # Platform note: Git Bash / MSYS may emit CRLF from external commands.
 strip_cr() {
     printf '%s' "$1" | tr -d '\r'
@@ -11,30 +29,24 @@ sanitize_stream() {
     tr -d '\r'
 }
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
 timestamp() {
     date '+%H:%M:%S'
 }
 
 info() {
-    echo -e "${BLUE}[$(timestamp)] [INFO]${NC} $1" >&2
+    ui_row "$(ui_color blue)[$(timestamp)] [INFO]$(ui_color reset) $1"
 }
 
 success() {
-    echo -e "${GREEN}[$(timestamp)] [SUCCESS]${NC} $1" >&2
+    ui_row "$(ui_color green)[$(timestamp)] [SUCCESS]$(ui_color reset) $1"
 }
 
 warning() {
-    echo -e "${YELLOW}[$(timestamp)] [WARNING]${NC} $1" >&2
+    ui_always "$(ui_color yellow)[$(timestamp)] [WARNING]$(ui_color reset) $1"
 }
 
 error() {
-    echo -e "${RED}[$(timestamp)] [ERROR]${NC} $1" >&2
+    ui_always "$(ui_color red)[$(timestamp)] [ERROR]$(ui_color reset) $1"
 }
 
 DEFAULT_PURPOSE="manual-final-snapshot"
@@ -60,39 +72,31 @@ RESULT_FILES=()
 
 usage() {
     cat << EOF
-Usage: $0 --instance <instance-id>[,<instance-id>...] [OPTIONS]
+Usage: $0 --instance <id>[,<id>...] [OPTIONS]
 
 Create intentional final backups for live EC2 instances.
 
-Modes:
-  volumes (default)  aws ec2 create-snapshots — EBS snapshots of attached volumes
-                     (copies volume tags + Purpose=${DEFAULT_PURPOSE})
-  ami                aws ec2 create-image — AMI + backing snapshots (relaunchable)
-                     (copies instance tags + Purpose + optional --tag onto AMI and snapshots)
+Required:
+  -i, --instance ID    Instance ID(s); repeatable or comma-separated
 
-Does NOT terminate or delete resources. Instance must exist.
+Targets:
+      --mode MODE      volumes (default) or ami
 
-Required arguments:
-  --instance, -i     One or more instance IDs (repeatable or comma-separated)
-
-Optional arguments:
-  --mode             volumes (default) or ami
-  --region, -r       AWS region
-  --profile, -p      AWS profile name
-  --tag Key=Value    Extra tag (repeatable; cannot override Purpose; overrides instance tags in AMI mode)
-  --dry-run          Preview only; do not create snapshots or AMIs
-  --wait             Wait until snapshots/AMI become available
-  --no-reboot        AMI mode only: skip reboot (crash-consistent; less safe)
-  --yes, -y          Skip confirmation prompt
-  --report-dir       Report directory (default: report/ec2-final-snapshot-<timestamp>)
-  --help, -h         Show this help message
+Options:
+  -r, --region REGION  AWS region
+  -p, --profile NAME   AWS profile name
+      --tag Key=Value  Extra tag; repeatable
+      --dry-run        Preview only; create nothing
+      --wait           Wait until snapshots/AMI are available
+      --no-reboot      AMI mode: skip reboot (less safe)
+  -y, --yes            Skip confirmation prompt
+      --report-dir DIR Report directory
+  -q, --quiet          Suppress the banner and non-error status rows
+  -h, --help           Show this help message
 
 Examples:
-  $0 -i i-0123456789abcdef0 --region us-east-1 --dry-run
-  $0 -i i-aaa --mode volumes --tag ChangeTicket=CHG123
+  $0 -i i-aaa --dry-run
   $0 -i i-aaa --mode ami --wait --yes
-  $0 -i i-aaa --mode ami --no-reboot --dry-run
-
 EOF
 }
 
@@ -799,11 +803,13 @@ write_summary() {
 }
 
 print_banner() {
-    echo "" >&2
-    echo "╔════════════════════════════════════════════════════════╗" >&2
-    echo "║          EC2 MANUAL / FINAL SNAPSHOTS                  ║" >&2
-    echo "╚════════════════════════════════════════════════════════╝" >&2
-    echo "" >&2
+    ui_banner <<'EOF'
+
+╔════════════════════════════════════════════════════════╗
+║          EC2 MANUAL / FINAL SNAPSHOTS                  ║
+╚════════════════════════════════════════════════════════╝
+
+EOF
 }
 
 main() {
@@ -934,9 +940,13 @@ while [[ $# -gt 0 ]]; do
             usage
             exit 0
             ;;
+        -q|--quiet)
+            ui_quiet
+            shift
+            ;;
         *)
             error "Unknown option: $1"
-            usage
+            usage >&2
             exit 1
             ;;
     esac
@@ -944,7 +954,7 @@ done
 
 if [[ ${#INSTANCE_IDS[@]} -eq 0 ]]; then
     error "Missing required argument: --instance / -i"
-    usage
+    usage >&2
     exit 1
 fi
 

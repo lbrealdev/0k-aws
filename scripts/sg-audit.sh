@@ -2,6 +2,24 @@
 
 set -euo pipefail
 
+# Resolve lib/ui.sh from this script's path, walking parents.
+_ui_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+_ui_path=""
+while [ -n "$_ui_dir" ]; do
+    if [ -f "$_ui_dir/lib/ui.sh" ]; then
+        _ui_path="$_ui_dir/lib/ui.sh"
+        break
+    fi
+    [ "$_ui_dir" = "/" ] && break
+    _ui_dir="$(dirname -- "$_ui_dir")"
+done
+if [ -z "$_ui_path" ]; then
+    printf 'Error: lib/ui.sh not found (copy lib/ with the repo layout)\n' >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+. "$_ui_path"
+
 # Read-only: list security-group ingress rules that allow 0.0.0.0/0 or ::/0.
 
 PROFILE=""
@@ -24,13 +42,17 @@ Options:
   --ports LIST          Comma-separated watched ports
                         (default: 22,3389,445,3306,5432,1433,6379,
                         27017,9200,2375,5985,5986)
-  --help, -h            Show this help message
+  -q, --quiet           Suppress the header and non-error status rows
+  -h, --help            Show this help message
 
+Examples:
+  $0 --profile prod --region us-east-1
+  $0 --ports 22,3389
 EOF
 }
 
-error() { echo "[ERROR] $*" >&2; }
-info()  { echo "[INFO]  $*" >&2; }
+error() { ui_always "$(ui_color red)[ERROR]$(ui_color reset) $*"; }
+info()  { ui_row "$(ui_color blue)[INFO]$(ui_color reset)  $*"; }
 
 _col_width() {
     local current="$1"
@@ -213,6 +235,10 @@ main() {
                 usage
                 exit 0
                 ;;
+            -q|--quiet)
+                ui_quiet
+                shift
+                ;;
             *)
                 error "unknown option: $1"
                 usage >&2
@@ -223,13 +249,15 @@ main() {
 
     check_dependencies
 
+    ui_header "sg-audit: security-group ingress open to the world (read-only)"
+
     local raw
     if ! raw=$(aws_json ec2 describe-security-groups); then
         error "ec2 describe-security-groups failed"
         exit 2
     fi
 
-    local line id name vpc proto from to cidr ports sens
+    local id name vpc proto from to cidr ports sens
     local rows=()
     local sensitive_count=0
 

@@ -2,6 +2,24 @@
 
 set -euo pipefail
 
+# Resolve lib/ui.sh from this script's path, walking parents.
+_ui_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+_ui_path=""
+while [ -n "$_ui_dir" ]; do
+    if [ -f "$_ui_dir/lib/ui.sh" ]; then
+        _ui_path="$_ui_dir/lib/ui.sh"
+        break
+    fi
+    [ "$_ui_dir" = "/" ] && break
+    _ui_dir="$(dirname -- "$_ui_dir")"
+done
+if [ -z "$_ui_path" ]; then
+    printf 'Error: lib/ui.sh not found (copy lib/ with the repo layout)\n' >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+. "$_ui_path"
+
 usage() {
     cat << EOF
 Usage: $0 [OPTIONS]
@@ -11,10 +29,18 @@ CodeBuild, CodeDeploy, CodePipeline) in the current account.
 
 Options:
   --xlsx             Convert CSV reports to a single XLSX (requires uv)
-  --help, -h         Show this help message
+  -q, --quiet        Suppress the header and non-error status rows
+  -h, --help         Show this help message
 
+Examples:
+  $0
+  $0 --xlsx
 EOF
 }
+
+error() { ui_always "$(ui_color red)[ERROR]$(ui_color reset) $*"; }
+warn()  { ui_always "$(ui_color yellow)[WARN]$(ui_color reset)  $*"; }
+info()  { ui_row "$(ui_color blue)[INFO]$(ui_color reset)  $*"; }
 
 XLSX_MODE=false
 while [[ $# -gt 0 ]]; do
@@ -27,8 +53,12 @@ while [[ $# -gt 0 ]]; do
             usage
             exit 0
             ;;
+        -q|--quiet)
+            ui_quiet
+            shift
+            ;;
         *)
-            echo "Error: unknown option: $1" >&2
+            error "unknown option: $1"
             usage >&2
             exit 1
             ;;
@@ -41,10 +71,7 @@ generated=()
 TIMESTAMP=$(date '+%Y%m%d%H%M%S')
 REPORT_DIR="aws_report_$(date '+%Y%m%d')"
 
-echo "############################################"
-echo "#   AWS Developer Tools Report Generator   #"
-echo "############################################"
-echo ""
+ui_header "aws-dev-tools-report: CSV reports for AWS developer tools"
 
 # Check AWS credentials and retrieve account
 if ACCOUNT=$(aws sts get-caller-identity 2>/dev/null | jq -r '.Account' 2>/dev/null); then
@@ -52,7 +79,7 @@ if ACCOUNT=$(aws sts get-caller-identity 2>/dev/null | jq -r '.Account' 2>/dev/n
   REPORT_SUFFIX="${AWS_ACCOUNT}_${TIMESTAMP}.csv"
   mkdir -p "$REPORT_DIR"
 else
-  echo "Error: Invalid or missing AWS credentials/access keys."
+  error "Invalid or missing AWS credentials/access keys."
   exit 1
 fi
 
@@ -62,19 +89,19 @@ fi
 if aws codecommit list-repositories > /dev/null 2>&1; then
   has_codecommit_repos=$(aws codecommit list-repositories | jq -r 'if (.repositories | length > 0) then "not empty" else "empty" end')
 else
-  echo "Warning: Insufficient permissions to access CodeCommit. Skipping report."
+  warn "Insufficient permissions to access CodeCommit. Skipping report."
   has_codecommit_repos="access_denied"
 fi
 
 if [ "$has_codecommit_repos" == "not empty" ]; then
-  echo "Generating report for AWS CodeCommit..."
+  info "Generating report for AWS CodeCommit..."
   aws codecommit list-repositories | jq -r '["NAME", "ID"], (.repositories[] | [.repositoryName, .repositoryId]) | @csv' > "$REPORT_DIR/aws-cc-$REPORT_SUFFIX"
   generated+=("aws-cc-$REPORT_SUFFIX")
 elif [ "$has_codecommit_repos" == "access_denied" ]; then
   # Report skipped due to permissions
   :
 else
-  echo "No repositories found in AWS CodeCommit."
+  info "No repositories found in AWS CodeCommit."
 fi
 
 # AWS CodeArtifact
@@ -83,19 +110,19 @@ fi
 if aws codeartifact list-repositories > /dev/null 2>&1; then
   has_codeartifact_repos=$(aws codeartifact list-repositories | jq -r 'if (.repositories | length > 0) then "not empty" else "empty" end')
 else
-  echo "Warning: Insufficient permissions to access CodeArtifact. Skipping report."
+  warn "Insufficient permissions to access CodeArtifact. Skipping report."
   has_codeartifact_repos="access_denied"
 fi
 
 if [ "$has_codeartifact_repos" == "not empty" ]; then
-  echo "Generating report for AWS CodeArtifact..."
+  info "Generating report for AWS CodeArtifact..."
   aws codeartifact list-repositories | jq -r '["NAME", "DOMAIN", "DESCRIPTION"], (.repositories[] | [.name, .domainName, .description]) | @csv' > "$REPORT_DIR/aws-ca-$REPORT_SUFFIX"
   generated+=("aws-ca-$REPORT_SUFFIX")
 elif [ "$has_codeartifact_repos" == "access_denied" ]; then
   # Report skipped due to permissions
   :
 else
-  echo "No repositories found in AWS CodeArtifact."
+  info "No repositories found in AWS CodeArtifact."
 fi
 
 # AWS CodeBuild
@@ -104,19 +131,19 @@ fi
 if aws codebuild list-projects > /dev/null 2>&1; then
   has_codebuild_projects=$(aws codebuild list-projects | jq -r 'if (.projects | length > 0) then "not empty" else "empty" end')
 else
-  echo "Warning: Insufficient permissions to access CodeBuild. Skipping report."
+  warn "Insufficient permissions to access CodeBuild. Skipping report."
   has_codebuild_projects="access_denied"
 fi
 
 if [ "$has_codebuild_projects" == "not empty" ]; then
-  echo "Generating report for AWS CodeBuild..."
+  info "Generating report for AWS CodeBuild..."
   aws codebuild list-projects | jq -r '["NAME"], (.projects[] | [.]) | @csv' > "$REPORT_DIR/aws-cb-$REPORT_SUFFIX"
   generated+=("aws-cb-$REPORT_SUFFIX")
 elif [ "$has_codebuild_projects" == "access_denied" ]; then
   # Report skipped due to permissions
   :
 else
-  echo "No projects found in AWS CodeBuild."
+  info "No projects found in AWS CodeBuild."
 fi
 
 # AWS CodeDeploy
@@ -125,19 +152,19 @@ fi
 if aws deploy list-applications > /dev/null 2>&1; then
   has_codedeploy_applications=$(aws deploy list-applications | jq -r 'if (.applications | length > 0) then "not empty" else "empty" end')
 else
-  echo "Warning: Insufficient permissions to access CodeDeploy. Skipping report."
+  warn "Insufficient permissions to access CodeDeploy. Skipping report."
   has_codedeploy_applications="access_denied"
 fi
 
 if [ "$has_codedeploy_applications" == "not empty" ]; then
-  echo "Generating report for AWS CodeDeploy..."
+  info "Generating report for AWS CodeDeploy..."
   aws deploy list-applications | jq -r '["NAME"], (.applications[] | [.]) | @csv' > "$REPORT_DIR/aws-cd-$REPORT_SUFFIX"
   generated+=("aws-cd-$REPORT_SUFFIX")
 elif [ "$has_codedeploy_applications" == "access_denied" ]; then
   # Report skipped due to permissions
   :
 else
-  echo "No applications found in AWS CodeDeploy."
+  info "No applications found in AWS CodeDeploy."
 fi
 
 # AWS CodePipeline
@@ -146,24 +173,20 @@ fi
 if aws codepipeline list-pipelines > /dev/null 2>&1; then
   has_codepipeline_pipelines=$(aws codepipeline list-pipelines | jq -r 'if (.pipelines | length > 0) then "not empty" else "empty" end')
 else
-  echo "Warning: Insufficient permissions to access CodePipeline. Skipping report."
+  warn "Insufficient permissions to access CodePipeline. Skipping report."
   has_codepipeline_pipelines="access_denied"
 fi
 
 if [ "$has_codepipeline_pipelines" == "not empty" ]; then
-  echo "Generating report for AWS CodePipeline..."
+  info "Generating report for AWS CodePipeline..."
   aws codepipeline list-pipelines | jq -r '["NAME", "VERSION", "TYPE", "CREATED"], (.pipelines[] | [.name, .version, .pipelineType, .created]) | @csv' > "$REPORT_DIR/aws-cp-$REPORT_SUFFIX"
   generated+=("aws-cp-$REPORT_SUFFIX")
 elif [ "$has_codepipeline_pipelines" == "access_denied" ]; then
   # Report skipped due to permissions
   :
 else
-  echo "No pipelines found in AWS CodePipeline."
+  info "No pipelines found in AWS CodePipeline."
 fi
-
-echo ""
-echo "############################################"
-echo ""
 
 # Check if any reports were generated
 HAS_REPORTS=false
@@ -174,28 +197,27 @@ fi
 if [ "$HAS_REPORTS" = true ]; then
     if [ "$XLSX_MODE" = true ]; then
         if command -v uv > /dev/null 2>&1; then
-            echo "Generating XLSX report..."
-            uv run csv_to_xlsx.py "$REPORT_DIR" || { echo "Error: XLSX creation failed. CSV files preserved."; exit 1; }
-            echo "XLSX created successfully. Cleaning up CSV files..."
+            info "Generating XLSX report..."
+            uv run csv_to_xlsx.py "$REPORT_DIR" || { error "XLSX creation failed. CSV files preserved."; exit 1; }
+            info "XLSX created successfully. Cleaning up CSV files..."
             rm -f "$REPORT_DIR"/*.csv
-            echo "Final report: $REPORT_DIR/final_report.xlsx"
+            info "Final report: $REPORT_DIR/final_report.xlsx"
         else
-            echo "Error: UV not installed. Install UV to use --xlsx mode."
+            error "UV not installed. Install UV to use --xlsx mode."
             exit 1
         fi
     else
-        echo "Generated reports in directory: $REPORT_DIR"
+        info "Generated reports in directory: $REPORT_DIR"
         for report in "${generated[@]}"; do
-            echo "  - $REPORT_DIR/$report"
+            info "  - $REPORT_DIR/$report"
         done
     fi
 else
-    echo "No reports were generated."
+    info "No reports were generated."
     if [ "$XLSX_MODE" = true ]; then
-        echo "Skipping XLSX."
+        info "Skipping XLSX."
         exit 1
     fi
 fi
 
-echo ""
-echo "Process completed."
+info "Process completed."
