@@ -14,7 +14,7 @@ while [ -n "$_ui_dir" ]; do
     _ui_dir="$(dirname -- "$_ui_dir")"
 done
 if [ -z "$_ui_path" ]; then
-    printf 'Error: lib/ui.sh not found (copy lib/ with the repo layout)\n' >&2
+    printf 'Error: lib/ui.sh not found (copy scripts/lib next to the script)\n' >&2
     exit 1
 fi
 # shellcheck disable=SC1090,SC1091

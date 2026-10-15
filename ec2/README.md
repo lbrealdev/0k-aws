@@ -21,5 +21,5 @@ Operational guides and good practices for day-to-day Amazon EC2 work: inventory,
 
 ## Related Scripts
 
-- [`scripts/ec2-inventory.sh`](../scripts/ec2-inventory.sh): read-only, instance-scoped JSON/CSV report (volumes, snapshots, AMIs, DLM, AWS Backup)
-- [`scripts/ec2-final-snapshot.sh`](../scripts/ec2-final-snapshot.sh): create final/manual volume snapshots or AMIs for live instances (**write**; `--mode volumes|ami`)
+- [`scripts/aws-ec2-inventory.sh`](../scripts/aws-ec2-inventory.sh): read-only, instance-scoped JSON/CSV report (volumes, snapshots, AMIs, DLM, AWS Backup)
+- [`scripts/aws-ec2-final-snapshot.sh`](../scripts/aws-ec2-final-snapshot.sh): create final/manual volume snapshots or AMIs for live instances (**write**; `--mode volumes|ami`)

@@ -2,7 +2,7 @@
 
 Notes for CloudWatch `AWS/Billing` / `EstimatedCharges` alarms used as WARN/CRIT spend alerts - especially when alarms are **centralized** in a payer/shared account and represent many linked accounts.
 
-Use with [`scripts/analyze-billing-alarms.py`](./scripts/analyze-billing-alarms.py) (`inventory` then `assess`).
+Use with [`scripts/aws-cloudwatch-billing-alarms.py`](../scripts/aws-cloudwatch-billing-alarms.py) (`inventory` then `assess`).
 
 The script reports **live AWS data only** (alarm thresholds, last-month `EstimatedCharges`, Budgets). It does **not** inject example dollar amounts into inventory or assessment output.
 

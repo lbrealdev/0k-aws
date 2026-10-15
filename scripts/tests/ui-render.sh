@@ -1,5 +1,5 @@
 #!/bin/bash
-# tests/ui-render.sh - presentation probe for the shared status layout.
+# scripts/tests/ui-render.sh - presentation probe for the shared status layout.
 #
 # For each shell script it checks the four documented cases:
 #   1. --help          plain, exit 0, no ANSI
@@ -12,7 +12,7 @@
 
 set -uo pipefail
 
-ROOT="$(cd "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 ESC=$'\e['
 
 TMP="$(mktemp -d)"
@@ -42,17 +42,17 @@ bad() { printf 'FAIL: %s\n' "$1"; failed=$((failed + 1)); }
 
 # script|banner-or-header marker|extra args to reach rendering
 SCRIPTS=(
-    "auth/scripts/aws-sso-check.sh|__________ ____|--check-config"
-    "dev-tools/codecommit/setup-cc-gitconfig.sh|AWS CODECOMMIT GIT CONFIG SETUP|"
-    "dev-tools/scripts/aws-dev-tools-report.sh|aws-dev-tools-report: CSV reports|"
-    "scripts/ec2-final-snapshot.sh|EC2 MANUAL / FINAL SNAPSHOTS|-i i-0123456789abcdef0"
-    "scripts/ec2-inventory.sh|ec2-inventory: read-only|-i i-0123456789abcdef0"
-    "scripts/find-iam-role.sh|find-iam-role: find an IAM role|dummy --profile p"
-    "scripts/list-resources.sh|list-resources: account resources|"
-    "scripts/rds-modify-snapshot.sh|RDS SNAPSHOT BATCH MODIFICATION|--source-option a --target-option b"
-    "scripts/rds-snapshot-age.sh|rds-snapshot-age: RDS snapshot ages|"
-    "scripts/s3-bucket-object.sh|s3-bucket-object: S3 buckets|"
-    "scripts/sg-audit.sh|sg-audit: security-group ingress|"
+    "scripts/aws-sso-check.sh|__________ ____|--check-config"
+    "scripts/aws-codecommit-gitconfig.sh|AWS CODECOMMIT GIT CONFIG SETUP|"
+    "scripts/aws-devtools-report.sh|aws-dev-tools-report: CSV reports|"
+    "scripts/aws-ec2-final-snapshot.sh|EC2 MANUAL / FINAL SNAPSHOTS|-i i-0123456789abcdef0"
+    "scripts/aws-ec2-inventory.sh|ec2-inventory: read-only|-i i-0123456789abcdef0"
+    "scripts/aws-iam-find-role.sh|find-iam-role: find an IAM role|dummy --profile p"
+    "scripts/aws-account-list-resources.sh|list-resources: account resources|"
+    "scripts/aws-rds-modify-snapshot.sh|RDS SNAPSHOT BATCH MODIFICATION|--source-option a --target-option b"
+    "scripts/aws-rds-snapshot-age.sh|rds-snapshot-age: RDS snapshot ages|"
+    "scripts/aws-s3-bucket-object.sh|s3-bucket-object: S3 buckets|"
+    "scripts/aws-ec2-sg-audit.sh|sg-audit: security-group ingress|"
 )
 
 # Run a script from an unrelated CWD (also proves lib/ui.sh resolution).

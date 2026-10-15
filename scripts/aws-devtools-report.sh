@@ -14,7 +14,7 @@ while [ -n "$_ui_dir" ]; do
     _ui_dir="$(dirname -- "$_ui_dir")"
 done
 if [ -z "$_ui_path" ]; then
-    printf 'Error: lib/ui.sh not found (copy lib/ with the repo layout)\n' >&2
+    printf 'Error: lib/ui.sh not found (copy scripts/lib next to the script)\n' >&2
     exit 1
 fi
 # shellcheck disable=SC1090,SC1091
@@ -198,7 +198,7 @@ if [ "$HAS_REPORTS" = true ]; then
     if [ "$XLSX_MODE" = true ]; then
         if command -v uv > /dev/null 2>&1; then
             info "Generating XLSX report..."
-            uv run csv_to_xlsx.py "$REPORT_DIR" || { error "XLSX creation failed. CSV files preserved."; exit 1; }
+            uv run csv-to-xlsx.py "$REPORT_DIR" || { error "XLSX creation failed. CSV files preserved."; exit 1; }
             info "XLSX created successfully. Cleaning up CSV files..."
             rm -f "$REPORT_DIR"/*.csv
             info "Final report: $REPORT_DIR/final_report.xlsx"

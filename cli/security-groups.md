@@ -26,5 +26,5 @@ aws ec2 describe-security-groups \
 
 ## Related scripts
 
-- [`scripts/sg-audit.sh`](../scripts/sg-audit.sh): read-only list of ingress rules open to `0.0.0.0/0` or `::/0`
+- [`scripts/aws-ec2-sg-audit.sh`](../scripts/aws-ec2-sg-audit.sh): read-only list of ingress rules open to `0.0.0.0/0` or `::/0`
 

@@ -14,7 +14,7 @@ Corporate Git for Windows often sets system `credential.helper = manager` (Git C
 
 ### Helper script
 
-[`./setup-cc-gitconfig.sh`](./setup-cc-gitconfig.sh) prepares Git Bash so the AWS CLI helper can run without that GCM dialog.
+[`aws-codecommit-gitconfig.sh`](../../scripts/aws-codecommit-gitconfig.sh) prepares Git Bash so the AWS CLI helper can run without that GCM dialog.
 
 | Mode | Behavior |
 | --- | --- |
@@ -28,13 +28,13 @@ Exit codes: `0` success (no effective manager helper, or `--migrate` succeeded);
 
 ```shell
 # check only (default)
-./setup-cc-gitconfig.sh
+./aws-codecommit-gitconfig.sh
 
 # writable system gitconfig: remove GCM helpers only (preserve others)
-./setup-cc-gitconfig.sh --fix-system
+./aws-codecommit-gitconfig.sh --fix-system
 
 # read-only system gitconfig: merge into global + GIT_CONFIG_NOSYSTEM
-./setup-cc-gitconfig.sh --migrate
+./aws-codecommit-gitconfig.sh --migrate
 ```
 
 ### Manual alternative (URL-scoped helpers)

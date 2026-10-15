@@ -17,7 +17,7 @@ while [ -n "$_ui_dir" ]; do
     _ui_dir="$(dirname -- "$_ui_dir")"
 done
 if [ -z "$_ui_path" ]; then
-    printf 'Error: lib/ui.sh not found (copy lib/ with the repo layout)\n' >&2
+    printf 'Error: lib/ui.sh not found (copy scripts/lib next to the script)\n' >&2
     exit 1
 fi
 # shellcheck disable=SC1090,SC1091
@@ -26,7 +26,7 @@ fi
 BACKUP_DIR="${HOME}/gitconfig-backups"
 DO_FIX_SYSTEM=0
 DO_MIGRATE=0
-BASHRC_MARKER="# managed-by: setup-cc-gitconfig.sh"
+BASHRC_MARKER="# managed-by: aws-codecommit-gitconfig.sh"
 GLOBAL_GITCONFIG="${HOME}/.gitconfig"
 USER_BASHRC="${HOME}/.bashrc"
 
