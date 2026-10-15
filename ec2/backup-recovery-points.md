@@ -98,7 +98,7 @@ Repeat for a sample of EC2/EBS recovery points and look for a common key/value. 
 
 Script default path:
 
-1. [`scripts/ec2-inventory.sh`](../scripts/ec2-inventory.sh) uses `list-recovery-points-by-resource` for the instance ARN and each volume ARN (fast, no vault scan, no tag assumptions)
+1. [`scripts/aws-ec2-inventory.sh`](../scripts/aws-ec2-inventory.sh) uses `list-recovery-points-by-resource` for the instance ARN and each volume ARN (fast, no vault scan, no tag assumptions)
 2. Optional later: a tag-based approach **only if** step 4 confirms a useful recovery-point tag
 
 Manual vault inspection above remains useful for exploration; it is not how the helper discovers recovery points.

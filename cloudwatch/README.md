@@ -9,13 +9,13 @@ Operational guides and read-only helpers for Amazon CloudWatch, especially payer
 
 ## Scripts
 
-- [`scripts/analyze-billing-alarms.py`](./scripts/analyze-billing-alarms.py): **read-only** two-round tool:
+- [`scripts/aws-cloudwatch-billing-alarms.py`](../scripts/aws-cloudwatch-billing-alarms.py): **read-only** two-round tool:
   1. `inventory`: WARN/CRIT list, linked-account pairing, WARN removal candidates
   2. `assess`: threshold sanity for all alarms vs last-month spend + AWS Budgets  
 
   Markdown reports are written with `-o/--output` (UTF-8 file); they are not printed to the terminal. See [`scripts/README.md`](./scripts/README.md).
 
-- [`scripts/review-account-billing.py`](./scripts/review-account-billing.py): **read-only** per-account review: hub CloudWatch + Budgets, target Cost Explorer (1/3/6 months + MTD), plain-text NORMAL/ABNORMAL report. See [`scripts/README.md`](./scripts/README.md).
+- [`scripts/aws-cloudwatch-account-billing.py`](../scripts/aws-cloudwatch-account-billing.py): **read-only** per-account review: hub CloudWatch + Budgets, target Cost Explorer (1/3/6 months + MTD), plain-text NORMAL/ABNORMAL report. See [`scripts/README.md`](./scripts/README.md).
 
 ## Related
 

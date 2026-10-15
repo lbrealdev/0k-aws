@@ -15,7 +15,7 @@ from openpyxl import Workbook
 
 def main():
     if len(sys.argv) != 2:
-        print("Usage: uv run csv_to_xlsx.py <report_directory>")
+        print("Usage: uv run csv-to-xlsx.py <report_directory>")
         sys.exit(1)
 
     csv_dir = sys.argv[1]

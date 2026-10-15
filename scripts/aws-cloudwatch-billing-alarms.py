@@ -31,7 +31,7 @@ from typing import Any
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-SCRIPT_NAME = "analyze-billing-alarms.py"
+SCRIPT_NAME = "aws-cloudwatch-billing-alarms.py"
 BILLING_REGION = "us-east-1"
 ACCOUNT_ID_RE = re.compile(r"(?<!\d)(\d{12})(?!\d)")
 ENV_CREDENTIAL_VARS = (

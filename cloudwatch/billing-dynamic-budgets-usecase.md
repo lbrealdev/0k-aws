@@ -102,9 +102,9 @@ Assessment tooling should always use **live** Budget amounts and metrics for the
 
 ## Implications for analysis tooling
 
-The existing helper [`scripts/analyze-billing-alarms.py`](./scripts/analyze-billing-alarms.py) inventories and assesses CloudWatch billing alarms, plus a Budget **read** as a secondary signal. It does not decode the monthly Lambda formula, and it does not prove whether CloudWatch thresholds are also automated.
+The existing helper [`scripts/aws-cloudwatch-billing-alarms.py`](../scripts/aws-cloudwatch-billing-alarms.py) inventories and assesses CloudWatch billing alarms, plus a Budget **read** as a secondary signal. It does not decode the monthly Lambda formula, and it does not prove whether CloudWatch thresholds are also automated.
 
-For a single member account, [`scripts/review-account-billing.py`](./scripts/review-account-billing.py) pulls hub CloudWatch + Budgets and target Cost Explorer spend (1/3/6 months + MTD) into a short plain-text NORMAL/ABNORMAL review.
+For a single member account, [`scripts/aws-cloudwatch-account-billing.py`](../scripts/aws-cloudwatch-account-billing.py) pulls hub CloudWatch + Budgets and target Cost Explorer spend (1/3/6 months + MTD) into a short plain-text NORMAL/ABNORMAL review.
 
 ## Related
 

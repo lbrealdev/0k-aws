@@ -94,4 +94,4 @@ Then open a new terminal and run `aws sso login` (no export). Override with `--p
 
 ## Scripts
 
-- [`aws-sso-check.sh`](./scripts/aws-sso-check.sh): validate SSO profiles; `--check-config` / `--check-env` for local inspection
+- [`aws-sso-check.sh`](../scripts/aws-sso-check.sh): validate SSO profiles; `--check-config` / `--check-env` for local inspection

@@ -9,7 +9,7 @@
 #
 # Banner text and column layout stay in the script. Source this file; it is
 # never executed directly. A script copied alone (for example into CloudShell)
-# will not find the helper unless lib/ui.sh is copied with the repo layout.
+# will not find the helper unless scripts/lib/ui.sh is copied with the script.
 
 if [ -n "${__UI_SH_LOADED:-}" ]; then
     return 0

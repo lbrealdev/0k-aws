@@ -19,7 +19,7 @@ EOF
 }
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SCRIPT="$ROOT/auth/scripts/aws-sso-check.sh"
+SCRIPT="$ROOT/scripts/aws-sso-check.sh"
 PASS=0
 FAIL=0
 

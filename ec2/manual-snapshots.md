@@ -47,20 +47,20 @@ Manual snapshots and AMIs persist and incur storage cost until you delete them. 
 
 ```shell
 # Volume snapshots (default)
-./scripts/ec2-final-snapshot.sh -i <INSTANCE_ID> --region <REGION> --dry-run
-./scripts/ec2-final-snapshot.sh -i <INSTANCE_ID> --tag ChangeTicket=CHG123
+./scripts/aws-ec2-final-snapshot.sh -i <INSTANCE_ID> --region <REGION> --dry-run
+./scripts/aws-ec2-final-snapshot.sh -i <INSTANCE_ID> --tag ChangeTicket=CHG123
 
 # AMI (reboots running instances by default)
-./scripts/ec2-final-snapshot.sh -i <INSTANCE_ID> --mode ami --wait --yes
-./scripts/ec2-final-snapshot.sh -i <INSTANCE_ID> --mode ami --no-reboot --dry-run
+./scripts/aws-ec2-final-snapshot.sh -i <INSTANCE_ID> --mode ami --wait --yes
+./scripts/aws-ec2-final-snapshot.sh -i <INSTANCE_ID> --mode ami --no-reboot --dry-run
 ```
 
-Requires a **live** instance (attached volumes). Does not terminate or delete anything. See [`scripts/ec2-final-snapshot.sh`](../scripts/ec2-final-snapshot.sh) and [`scripts/README.md`](../scripts/README.md).
+Requires a **live** instance (attached volumes). Does not terminate or delete anything. See [`scripts/aws-ec2-final-snapshot.sh`](../scripts/aws-ec2-final-snapshot.sh) and [`scripts/README.md`](../scripts/README.md).
 
 Pair with read-only inventory first:
 
 ```shell
-./scripts/ec2-inventory.sh -i <INSTANCE_ID> --region <REGION>
+./scripts/aws-ec2-inventory.sh -i <INSTANCE_ID> --region <REGION>
 ```
 
 ## Manual CLI

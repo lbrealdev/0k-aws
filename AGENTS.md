@@ -23,14 +23,14 @@
 
 ### Argument parsing
 
-- `while [[ $# -gt 0 ]]; do case $1 in ... esac; done` then `main` (see `auth/scripts/aws-sso-check.sh`)
+- `while [[ $# -gt 0 ]]; do case $1 in ... esac; done` then `main` (see `scripts/aws-sso-check.sh`)
 - Unknown flags: print error + usage to stderr, exit 1
 - Mutually exclusive flags should be rejected explicitly, not silently ignored
 - Keep `--help` line width at 80 columns or less
 
 ### Printing and logging
 
-Status and data are separated, and caller/config-derived strings are untrusted for terminal output. `lib/ui.sh` owns the mechanics; source it from every script.
+Status and data are separated, and caller/config-derived strings are untrusted for terminal output. `scripts/lib/ui.sh` owns the mechanics; source it from every script.
 
 - Banner, one-line header, and status rows go to stderr. stdout carries only pipeable data and the `--dry-run` plan
 - `-q` / `--quiet` drops the banner/header and every non-error status row; warnings and errors still print on stderr
@@ -39,11 +39,11 @@ Status and data are separated, and caller/config-derived strings are untrusted f
 - Escape (`ui_esc_data` / `ui_unesc_data`) only on human-facing status lines, never on data, tables, CSV, JSON, or report files. It must be reversible for **any** byte, including ASCII SUB (`0x1a`). Doubling backslashes is not enough (`\e[31m` still matches inside `\\e`). Width math uses `ui_visible_plain` (the decoded visible string)
 - Mask secrets (`AWS_SECRET_ACCESS_KEY`, session tokens): never print them in full
 
-Each script resolves the helper from its own path (`dirname "${BASH_SOURCE[0]}"`), walking parents until it finds `lib/ui.sh`, then exits 1 with a clear stderr message if missing. A script copied alone (for example into CloudShell) will not find the helper unless `lib/ui.sh` is copied with the repo layout.
+Each script resolves the helper from its own path (`dirname "${BASH_SOURCE[0]}"`), walking parents until it finds `scripts/lib/ui.sh`, then exits 1 with a clear stderr message if missing. A script copied alone (for example into CloudShell) will not find the helper unless `scripts/lib/` is copied with the script.
 
 Banner text and column layout stay in the script; the helper owns TTY, `NO_COLOR`, quiet, stream choice, and the escape. Use a full banner only on write scripts; simple read-only scripts get a one-line header (`ui_header`).
 
-Scripts that moved a status line from stdout to stderr: `auth/scripts/aws-sso-check.sh`, `dev-tools/codecommit/setup-cc-gitconfig.sh`, `dev-tools/scripts/aws-dev-tools-report.sh`, `scripts/list-resources.sh`, `scripts/rds-modify-snapshot.sh`, `scripts/s3-bucket-object.sh`.
+Scripts that moved a status line from stdout to stderr: `scripts/aws-sso-check.sh`, `scripts/aws-codecommit-gitconfig.sh`, `scripts/aws-devtools-report.sh`, `scripts/aws-account-list-resources.sh`, `scripts/aws-rds-modify-snapshot.sh`, `scripts/aws-s3-bucket-object.sh`.
 
 ### Testing
 
@@ -65,5 +65,5 @@ There is no CI workflow yet. Before opening a PR that touches scripts:
 ### Python
 
 - Prefer a uv [inline script](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies) (PEP 723) when third-party deps are required (`boto3`)
-- `--help` via argparse; exit 0 on help, 1 on usage, 2 on AWS errors (match `cloudwatch/scripts/` when adding there)
+- `--help` via argparse; exit 0 on help, 1 on usage, 2 on AWS errors (match the CloudWatch helpers in `scripts/`)
 - Do not log credentials or full session tokens; named profiles over implicit env
