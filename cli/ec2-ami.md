@@ -27,4 +27,4 @@ aws ec2 describe-images \
 ## Related
 
 - [EC2 Elimination](../ec2/elimination.md): AMI retention and backing snapshot cleanup
-- [`scripts/ec2-inventory.sh`](../scripts/ec2-inventory.sh): JSON/CSV report of AMIs related to specific instance IDs
+- [`scripts/aws-ec2-inventory.sh`](../scripts/aws-ec2-inventory.sh): JSON/CSV report of AMIs related to specific instance IDs

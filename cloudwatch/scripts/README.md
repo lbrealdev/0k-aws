@@ -1,6 +1,6 @@
 # cloudwatch/scripts
 
-## `analyze-billing-alarms.py`
+## `aws-cloudwatch-billing-alarms.py`
 
 Read-only **two-round** tool for centralized CloudWatch billing alarms (`AWS/Billing` / `EstimatedCharges`):
 
@@ -28,13 +28,13 @@ Concepts and failure codes: [`../billing-alarm-misconfigurations.md`](../billing
 
 ```bash
 # Round 1 - write inventory JSON (and optional markdown report)
-./cloudwatch/scripts/analyze-billing-alarms.py inventory \
+./scripts/aws-cloudwatch-billing-alarms.py inventory \
   -p <central> -r us-east-1 -f json -o billing-inventory.json
-./cloudwatch/scripts/analyze-billing-alarms.py inventory \
+./scripts/aws-cloudwatch-billing-alarms.py inventory \
   -p <central> -f markdown -o inventory.md
 
 # Round 2 - assess all alarms; markdown must go to a file
-./cloudwatch/scripts/analyze-billing-alarms.py assess \
+./scripts/aws-cloudwatch-billing-alarms.py assess \
   -p <central> -r us-east-1 --from billing-inventory.json -f markdown -o assessment.md
 ```
 
@@ -75,7 +75,7 @@ Reports use **live AWS values only** (no hard-coded example dollar amounts).
 
 ---
 
-## `review-account-billing.py`
+## `aws-cloudwatch-account-billing.py`
 
 Read-only **per-account** review using **two named SSO profiles** (not env credentials):
 
@@ -99,10 +99,10 @@ Implemented as a uv inline script with `boto3`.
 ### Usage
 
 ```bash
-./cloudwatch/scripts/review-account-billing.py --hub hub --account project-a
+./scripts/aws-cloudwatch-account-billing.py --hub hub --account project-a
 
 # Optional: focus budgets whose name contains a substring
-./cloudwatch/scripts/review-account-billing.py --hub hub --account project-a --budget Breached
+./scripts/aws-cloudwatch-account-billing.py --hub hub --account project-a --budget Breached
 ```
 
 CloudWatch billing metrics, Budgets, and Cost Explorer calls always use **`us-east-1`** (no `--region`).

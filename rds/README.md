@@ -8,5 +8,5 @@ Operational guides for Amazon RDS.
 
 ## Related Scripts
 
-- [`scripts/rds-modify-snapshot.sh`](../scripts/rds-modify-snapshot.sh): batch-modify RDS DB snapshot option groups
-- [`scripts/rds-snapshot-age.sh`](../scripts/rds-snapshot-age.sh): read-only age report for instance and cluster snapshots
+- [`scripts/aws-rds-modify-snapshot.sh`](../scripts/aws-rds-modify-snapshot.sh): batch-modify RDS DB snapshot option groups
+- [`scripts/aws-rds-snapshot-age.sh`](../scripts/aws-rds-snapshot-age.sh): read-only age report for instance and cluster snapshots

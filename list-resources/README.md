@@ -10,7 +10,7 @@ Approaches and tools for discovering resources across an AWS account.
 
 ## Related scripts
 
-- [`scripts/list-resources.sh`](../scripts/list-resources.sh): list account resources across profiles/regions
+- [`scripts/aws-account-list-resources.sh`](../scripts/aws-account-list-resources.sh): list account resources across profiles/regions
 
 ## Tools
 

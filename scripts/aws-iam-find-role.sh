@@ -2,6 +2,24 @@
 
 set -euo pipefail
 
+# Resolve lib/ui.sh from this script's path, walking parents.
+_ui_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+_ui_path=""
+while [ -n "$_ui_dir" ]; do
+    if [ -f "$_ui_dir/lib/ui.sh" ]; then
+        _ui_path="$_ui_dir/lib/ui.sh"
+        break
+    fi
+    [ "$_ui_dir" = "/" ] && break
+    _ui_dir="$(dirname -- "$_ui_dir")"
+done
+if [ -z "$_ui_path" ]; then
+    printf 'Error: lib/ui.sh not found (copy scripts/lib next to the script)\n' >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+. "$_ui_path"
+
 # Read-only: find an IAM role across logged-in AWS SSO profiles.
 # IAM is global; --region us-east-1 is only a CLI signing dummy.
 
@@ -23,28 +41,35 @@ Usage: $0 QUERY [OPTIONS]
        $0 --name NAME [OPTIONS]
        $0 --check
 
-Find an IAM role across AWS SSO profiles.
+Find an IAM role across AWS SSO profiles (read-only).
 
-Options:
+Targets:
   QUERY              Substring match on RoleName or Arn
   --name, -n NAME    Exact RoleName
+  --check            Validate SSO profiles in ~/.aws/config
+
+Options:
   --profile, -p NAME Limit to this profile
   --profiles LIST    Comma-separated profiles
-  --check            Validate SSO profiles in ~/.aws/config
-  --help, -h         Show this help
+  -q, --quiet        Suppress the header and non-error status rows
+  -h, --help         Show this help
+
+Examples:
+  $0 my-role
+  $0 --name my-role --profile prod
 EOF
 }
 
 short_usage() {
-    cat << EOF
+    cat >&2 << EOF
 Usage: $0 QUERY | --name NAME | --check
 Try '$0 --help' for more information.
 EOF
 }
 
-error() { echo "[ERROR] $*" >&2; }
-warn()  { echo "[WARN]  $*" >&2; }
-info()  { echo "[INFO]  $*" >&2; }
+error() { ui_always "$(ui_color red)[ERROR]$(ui_color reset) $*"; }
+warn()  { ui_always "$(ui_color yellow)[WARN]$(ui_color reset)  $*"; }
+info()  { ui_row "$(ui_color blue)[INFO]$(ui_color reset)  $*"; }
 
 _col_width() {
     local current="$1"
@@ -168,7 +193,7 @@ check() {
     local n=0
     mapfile -t profiles < <(discover_sso_profiles "$AWS_CONFIG_FILE")
     n=${#profiles[@]}
-    echo "Found $n SSO profiles in $AWS_CONFIG_FILE"
+    ui_out "Found $n SSO profiles in $AWS_CONFIG_FILE"
     if [[ "$n" -eq 0 ]]; then
         exit 1
     fi
@@ -227,9 +252,13 @@ parse_args() {
                 shift
                 break
                 ;;
+            -q|--quiet)
+                ui_quiet
+                shift
+                ;;
             -*)
                 error "Unknown option: $1"
-                usage
+                usage >&2
                 exit 2
                 ;;
             *)
@@ -320,6 +349,8 @@ main() {
     check_dependencies
     refuse_env_credentials
 
+    ui_header "find-iam-role: find an IAM role across SSO profiles"
+
     if [[ ${#PROFILES[@]} -eq 0 ]]; then
         mapfile -t PROFILES < <(discover_sso_profiles "$AWS_CONFIG_FILE")
     fi
@@ -349,13 +380,13 @@ main() {
         exit 1
     fi
 
-    echo ""
+    ui_row ""
     if [[ ${#HITS[@]} -gt 0 ]]; then
         print_table "${HITS[@]}"
     else
         info "no matches"
     fi
-    echo ""
+    ui_row ""
     info "scanned=$SCANNED skipped=$SKIPPED matches=$FOUND"
     [[ "$FOUND" -gt 0 ]]
 }

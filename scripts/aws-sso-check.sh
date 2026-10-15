@@ -2,6 +2,24 @@
 
 set -euo pipefail
 
+# Resolve lib/ui.sh from this script's path, walking parents.
+_ui_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+_ui_path=""
+while [ -n "$_ui_dir" ]; do
+    if [ -f "$_ui_dir/lib/ui.sh" ]; then
+        _ui_path="$_ui_dir/lib/ui.sh"
+        break
+    fi
+    [ "$_ui_dir" = "/" ] && break
+    _ui_dir="$(dirname -- "$_ui_dir")"
+done
+if [ -z "$_ui_path" ]; then
+    printf 'Error: lib/ui.sh not found (copy scripts/lib next to the script)\n' >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+. "$_ui_path"
+
 AWS_CREDENTIALS_FILE="${AWS_SHARED_CREDENTIALS_FILE:-$HOME/.aws/credentials}"
 AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
 AWS_ENV_VARS=("AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN")
@@ -15,49 +33,33 @@ CHECK_ENV=false
 BASHRC_FILE="${HOME}/.bashrc"
 BASH_PROFILE_FILE="${HOME}/.bash_profile"
 
-if [ -t 1 ]; then
-  GREEN="\e[32m"; YELLOW="\e[33m"; BLUE="\e[34m"; RED="\e[31m"; GRAY="\e[90m"; RESET="\e[0m"
-else
-  GREEN=""; YELLOW=""; BLUE=""; RED=""; GRAY=""; RESET=""
-fi
-
 usage() {
     cat << EOF
 Usage: $0 [OPTIONS]
 
-Validate local AWS SSO profiles can authenticate (STS + account alias),
-or inspect local config / shell defaults without logging in.
+Validate local AWS SSO profiles (STS + account alias), or inspect local
+config and shell defaults without logging in.
 
-  Flow:
-
-   +-------------------------------------+
-   |          aws-sso-check.sh           |
-   +-------------------------------------+
-                     |
-        +------------+------------+
-        |            |            |
-        v            v            v
-    (default)   --check-config   --check-env
-    validate    list SSO         show AWS_PROFILE
-    profiles    profiles in      shell defaults
-    (STS login) ~/.aws/config    (no login)
-                (no login)
+Targets:
+  --check-config     Inspect ~/.aws/config for SSO profiles (no login)
+  --check-env        Inspect ~/.bashrc and ~/.bash_profile defaults (no login)
 
 Options:
-  --check-config     Inspect ~/.aws/config for SSO profiles; no login required
-  --check-env        Inspect shell defaults for AWS_PROFILE
-                     (~/.bashrc, ~/.bash_profile)
-  --help, -h         Show this help message
+  -q, --quiet        Suppress the banner and non-error status rows
+  -h, --help         Show this help message
 
+Examples:
+  $0
+  $0 --check-config
 EOF
 }
 
 now() { date +"%Y-%m-%d %H:%M:%S"; }
 
-log_info()  { local msg="${*//\\/\\\\}"; echo -e "[$(now)] ${BLUE}[INFO]${RESET}  $msg"; }
-log_ok()    { local msg="${*//\\/\\\\}"; echo -e "[$(now)] ${GREEN}[OK]${RESET}    $msg"; }
-log_warn()  { local msg="${*//\\/\\\\}"; echo -e "[$(now)] ${YELLOW}[WARN]${RESET}  $msg"; }
-log_error() { local msg="${*//\\/\\\\}"; echo -e "[$(now)] ${RED}[ERROR]${RESET} $msg"; }
+log_info()  { ui_row "[$(now)] $(ui_color blue)[INFO]$(ui_color reset)  $*"; }
+log_ok()    { ui_row "[$(now)] $(ui_color green)[OK]$(ui_color reset)    $*"; }
+log_warn()  { ui_always "[$(now)] $(ui_color yellow)[WARN]$(ui_color reset)  $*"; }
+log_error() { ui_always "[$(now)] $(ui_color red)[ERROR]$(ui_color reset) $*"; }
 
 check_aws_cli() {
     log_info "Checking prerequisites..."
@@ -99,7 +101,7 @@ check_aws_env_vars() {
     if [ ${#found[@]} -gt 0 ]; then
         log_error "AWS environment variables are set. These may interfere with SSO authentication."
         for line in "${found[@]}"; do
-            echo -e "   - ${line//\\/\\\\}"
+            ui_always "   - $line"
         done
         log_info "Unset them with: unset ${AWS_ENV_VARS[*]}"
         exit 1
@@ -258,98 +260,29 @@ _dashes() {
     printf '%*s' "$1" '' | tr ' ' '-'
 }
 
-# Strip the script's color variables from $1 (stdout). Used for width math;
-# colors are literal "\e[..m" strings here, expanded only at print time.
-# Use case/"$tok" matching (literal) - not ${s//tok/} - because bash treats
-# the latter as a glob where "\e[31m" also matches data "e[31m".
-_strip_colors() {
-    local s="$1" tok out rest
-    for tok in "$GREEN" "$YELLOW" "$BLUE" "$RED" "$GRAY" "$RESET"; do
-        [ -z "$tok" ] && continue
-        out=""
-        rest="$s"
-        while [ -n "$rest" ]; do
-            case "$rest" in
-                *"$tok"*)
-                    out+="${rest%%"$tok"*}"
-                    rest="${rest#*"$tok"}"
-                    ;;
-                *)
-                    out+="$rest"
-                    rest=""
-                    ;;
-            esac
-        done
-        s="$out"
-    done
-    printf '%s' "$s"
-}
-
-# Encode config-derived DATA so it cannot form color tokens (`\e[32m` etc.).
-# Doubling backslashes is insufficient: `\e[31m` still matches inside `\\e`.
-# Reversible for any byte, including ASCII SUB (0x1a):
-#   1. existing SUB -> SUB 's'
-#   2. backslash    -> SUB 'b'
-# Encoded form contains no raw `\`, so token substitution cannot hit data.
-# Decode SUB 'b' before SUB 's' so an original SUB+'b' is not a false `\`.
-# Width math uses the decoded string (pairs are 2 bytes, values 1).
-_esc_data() {
-    local s="$1"
-    s="${s//$'\x1a'/$'\x1as'}"
-    s="${s//\\/$'\x1ab'}"
-    printf '%s' "$s"
-}
-
-_unesc_data() {
-    local s="$1"
-    s="${s//$'\x1ab'/\\}"
-    s="${s//$'\x1as'/$'\x1a'}"
-    printf '%s' "$s"
-}
-
-# Visible (colorless, decoded) form of a panel row; used for width math.
-_visible_plain() {
-    _unesc_data "$(_strip_colors "$1")"
-}
-
-# Render a panel row: data was already encoded by _esc_data at build time, so
-# the ONLY remaining escape-looking sequences are the script's own color
-# tokens - translated to ANSI only when the terminal supports colors
-# (GREEN non-empty). Then restore data bytes. Emits literally via printf '%s'.
-_render() {
-    local s="$1"
-    if [ -n "$GREEN" ]; then
-        s="${s//\\e[32m/$'\e[32m'}"
-        s="${s//\\e[33m/$'\e[33m'}"
-        s="${s//\\e[34m/$'\e[34m'}"
-        s="${s//\\e[31m/$'\e[31m'}"
-        s="${s//\\e[90m/$'\e[90m'}"
-        s="${s//\\e[0m/$'\e[0m'}"
-    fi
-    _unesc_data "$s"
-}
-
 # Print a pure-ASCII panel around one or more rows. Frame width fits the
-# longest visible row; rows may embed color vars (colors wrap values only).
+# longest visible row. Rows may embed real ANSI colors (ui_color) and data
+# encoded with ui_esc_data; both are resolved here.
 print_panel() {
+    ui_is_quiet && return 0
     local rows=("$@")
     local row plain max=0
 
     for row in "${rows[@]}"; do
-        plain=$(_visible_plain "$row")
+        plain=$(ui_visible_plain "$row")
         if [ "${#plain}" -gt "$max" ]; then
             max=${#plain}
         fi
     done
 
-    printf '+%s+\n' "$(_dashes $((max + 2)))"
+    printf '+%s+\n' "$(_dashes $((max + 2)))" >&2
     for row in "${rows[@]}"; do
-        plain=$(_visible_plain "$row")
-        printf '| '
-        _render "$row"
-        printf '%*s |\n' "$((max - ${#plain}))" ''
+        plain=$(ui_visible_plain "$row")
+        printf '| ' >&2
+        ui_unesc_data "$row" >&2
+        printf '%*s |\n' "$((max - ${#plain}))" '' >&2
     done
-    printf '+%s+\n' "$(_dashes $((max + 2)))"
+    printf '+%s+\n' "$(_dashes $((max + 2)))" >&2
 }
 
 # Print first AWS_PROFILE value found in a file (stdout); return 0 if found.
@@ -398,7 +331,7 @@ _file_sources_bashrc() {
 
 run_check_env() {
     log_info "Inspecting shell default profile (AWS_PROFILE)..."
-    echo ""
+    ui_row ""
 
     if [ -n "${AWS_PROFILE:-}" ]; then
         log_ok "Current shell: AWS_PROFILE=${AWS_PROFILE}"
@@ -444,20 +377,20 @@ run_check_env() {
     local summary
     case "$found_in" in
         bashrc)
-            summary="Shell default: AWS_PROFILE=$(_esc_data "$bashrc_profile") (from $(_esc_data "$BASHRC_FILE"))"
+            summary="Shell default: AWS_PROFILE=$(ui_esc_data "$bashrc_profile") (from $(ui_esc_data "$BASHRC_FILE"))"
             ;;
         bash_profile)
-            summary="Shell default: AWS_PROFILE=$(_esc_data "$bash_profile_profile") (from $(_esc_data "$BASH_PROFILE_FILE"))"
+            summary="Shell default: AWS_PROFILE=$(ui_esc_data "$bash_profile_profile") (from $(ui_esc_data "$BASH_PROFILE_FILE"))"
             ;;
         both)
-            summary="Shell default: AWS_PROFILE set in both rc files (bashrc=$(_esc_data "$bashrc_profile"), bash_profile=$(_esc_data "$bash_profile_profile"))"
+            summary="Shell default: AWS_PROFILE set in both rc files (bashrc=$(ui_esc_data "$bashrc_profile"), bash_profile=$(ui_esc_data "$bash_profile_profile"))"
             ;;
         *)
-            summary="Shell default: no AWS_PROFILE configured in $(_esc_data "$BASHRC_FILE") or $(_esc_data "$BASH_PROFILE_FILE")"
+            summary="Shell default: no AWS_PROFILE configured in $(ui_esc_data "$BASHRC_FILE") or $(ui_esc_data "$BASH_PROFILE_FILE")"
             ;;
     esac
 
-    echo ""
+    ui_row ""
     print_panel "$summary"
 }
 
@@ -513,7 +446,7 @@ run_check_config() {
     done <<< "$rows"
 
     log_ok "Found $profile_count SSO profile(s)"
-    echo ""
+    ui_out ""
     printf "%-*s | %-*s | %-*s | %-*s | %-*s\n" \
         "$w_profile" "$h_profile" \
         "$w_method" "$h_method" \
@@ -539,8 +472,8 @@ run_check_config() {
             "$w_role" "$role_col"
     done <<< "$display_rows"
 
-    echo ""
-    print_panel "Config-only check: $profile_count SSO profile(s) in $(_esc_data "$AWS_CONFIG_FILE")"
+    ui_out ""
+    print_panel "Config-only check: $profile_count SSO profile(s) in $(ui_esc_data "$AWS_CONFIG_FILE")"
 }
 
 run_validate() {
@@ -570,9 +503,9 @@ run_validate() {
 
     log_ok "Found $profile_count SSO profile(s)"
 
-    echo ""
+    ui_row ""
     log_info "Validating profiles..."
-    echo ""
+    ui_row ""
 
     local success_count=0
     local failure_count=0
@@ -618,19 +551,21 @@ run_validate() {
         local status account_id alias profile
         IFS='|' read -r status account_id alias profile <<< "$row"
         if [ "$status" = "OK" ]; then
-            printf "${GREEN}%-6s${RESET} %-*s | %-*s | %-*s\n" \
-                "[OK]" "$w_account" "$account_id" "$w_alias" "$alias" "$w_profile" "$profile"
+            ui_row "$(printf '%s%-6s%s %-*s | %-*s | %-*s' \
+                "$(ui_color green)" "[OK]" "$(ui_color reset)" \
+                "$w_account" "$account_id" "$w_alias" "$alias" "$w_profile" "$profile")"
         else
-            printf "${RED}%-6s${RESET} %-*s | %-*s | %-*s\n" \
-                "[FAIL]" "$w_account" "$account_id" "$w_alias" "$alias" "$w_profile" "$profile"
+            ui_always "$(printf '%s%-6s%s %-*s | %-*s | %-*s' \
+                "$(ui_color red)" "[FAIL]" "$(ui_color reset)" \
+                "$w_account" "$account_id" "$w_alias" "$alias" "$w_profile" "$profile")"
         fi
     done <<< "$display_rows"
 
-    echo ""
+    ui_row ""
     print_panel \
         "Validated: $profile_count profile(s)" \
-        "Succeeded: ${GREEN}$success_count${RESET}" \
-        "Failed:    ${RED}$failure_count${RESET}"
+        "Succeeded: $(ui_color green)$success_count$(ui_color reset)" \
+        "Failed:    $(ui_color red)$failure_count$(ui_color reset)"
 
     if [ "$failure_count" -gt 0 ]; then
         exit 1
@@ -644,7 +579,7 @@ run_validate() {
 # Regenerate: curl -s "<url>" | sed 's/[[:space:]]*$//'  ->  paste below
 # ============================================================================
 print_banner() {
-    cat <<'EOF'
+    ui_banner <<'EOF'
    __________ ____     ________  ________________ __
   / ___/ ___// __ \   / ____/ / / / ____/ ____/ //_/
   \__ \\__ \/ / / /  / /   / /_/ / __/ / /   / ,<
@@ -663,6 +598,10 @@ main() {
                 ;;
             --check-env)
                 CHECK_ENV=true
+                shift
+                ;;
+            -q|--quiet)
+                ui_quiet
                 shift
                 ;;
             --help|-h)

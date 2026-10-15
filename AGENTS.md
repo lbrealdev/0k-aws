@@ -23,23 +23,27 @@
 
 ### Argument parsing
 
-- `while [[ $# -gt 0 ]]; do case $1 in ... esac; done` then `main` (see `auth/scripts/aws-sso-check.sh`)
+- `while [[ $# -gt 0 ]]; do case $1 in ... esac; done` then `main` (see `scripts/aws-sso-check.sh`)
 - Unknown flags: print error + usage to stderr, exit 1
 - Mutually exclusive flags should be rejected explicitly, not silently ignored
 - Keep `--help` line width at 80 columns or less
 
 ### Printing and logging
 
-Config paths, profile names, and other caller/config-derived strings are untrusted for terminal output.
+Status and data are separated, and caller/config-derived strings are untrusted for terminal output. `scripts/lib/ui.sh` owns the mechanics; source it from every script.
 
-- Do not `echo -e` (or `echo -en`) with those strings: `\n`, `\e`, `\c` and friends are interpreted even when the expansion is quoted
-- Emit data with `printf '%s'` (or `printf '%s\n'`)
-- If a line mixes trusted color tokens (`\e[32m`) with data, encode the data first so it cannot form those tokens. Doubling backslashes is not enough (`\e[31m` still matches inside `\\e`)
-- Encoding must be reversible for **any** byte, including ASCII SUB (`0x1a`). Escape existing sentinels before replacing `\`; decode in the reverse pair order. Width math must use the decoded visible string
-- Color only when stdout is a TTY (`[ -t 1 ]`); piped output stays pure text
+- Banner, one-line header, and status rows go to stderr. stdout carries only pipeable data and the `--dry-run` plan
+- `-q` / `--quiet` drops the banner/header and every non-error status row; warnings and errors still print on stderr
+- Color only when `NO_COLOR` is unset AND the file descriptor being written is a TTY (`ui_color NAME [fd]`, default fd 2). A pipe and `NO_COLOR=1` stay pure text on both streams
+- Emit data with `printf '%s'` (or `printf '%s\n'`). Do not `echo -e` (or `echo -en`) with caller/config-derived strings: `\n`, `\e`, `\c` and friends are interpreted even when the expansion is quoted
+- Escape (`ui_esc_data` / `ui_unesc_data`) only on human-facing status lines, never on data, tables, CSV, JSON, or report files. It must be reversible for **any** byte, including ASCII SUB (`0x1a`). Doubling backslashes is not enough (`\e[31m` still matches inside `\\e`). Width math uses `ui_visible_plain` (the decoded visible string)
 - Mask secrets (`AWS_SECRET_ACCESS_KEY`, session tokens): never print them in full
 
-The working example is `_esc_data` / `_unesc_data` / `_render` in `auth/scripts/aws-sso-check.sh`. Regression probe: `tests/aws-sso-check-render.sh`.
+Each script resolves the helper from its own path (`dirname "${BASH_SOURCE[0]}"`), walking parents until it finds `scripts/lib/ui.sh`, then exits 1 with a clear stderr message if missing. A script copied alone (for example into CloudShell) will not find the helper unless `scripts/lib/` is copied with the script.
+
+Banner text and column layout stay in the script; the helper owns TTY, `NO_COLOR`, quiet, stream choice, and the escape. Use a full banner only on write scripts; simple read-only scripts get a one-line header (`ui_header`).
+
+Scripts that moved a status line from stdout to stderr: `scripts/aws-sso-check.sh`, `scripts/aws-codecommit-gitconfig.sh`, `scripts/aws-devtools-report.sh`, `scripts/aws-account-list-resources.sh`, `scripts/aws-rds-modify-snapshot.sh`, `scripts/aws-s3-bucket-object.sh`.
 
 ### Testing
 
@@ -48,7 +52,8 @@ There is no CI workflow yet. Before opening a PR that touches scripts:
 - `bash -n path/to/script.sh`
 - `shellcheck path/to/script.sh` when `shellcheck` is on `PATH` (zero findings)
 - `python3 -m py_compile path/to/script.py` for Python helpers
-- For `aws-sso-check.sh` rendering changes: `tests/aws-sso-check-render.sh` (TTY and non-TTY; includes a `0x1a` path/profile)
+- For `aws-sso-check.sh` rendering changes: `scripts/tests/aws-sso-check-render.sh` (TTY and non-TTY; includes a `0x1a` path/profile)
+- For status/color/stream changes: `scripts/tests/ui-render.sh` (every shell script; `--help`, pipe, `NO_COLOR=1`, `--quiet`)
 - Scripts whose source is grepped for non-ASCII (token-safe renderers) must stay `LC_ALL=C grep -nP '[^\x00-\x7F]'`-clean
 
 ### Docs
@@ -60,5 +65,5 @@ There is no CI workflow yet. Before opening a PR that touches scripts:
 ### Python
 
 - Prefer a uv [inline script](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies) (PEP 723) when third-party deps are required (`boto3`)
-- `--help` via argparse; exit 0 on help, 1 on usage, 2 on AWS errors (match `cloudwatch/scripts/` when adding there)
+- `--help` via argparse; exit 0 on help, 1 on usage, 2 on AWS errors (match the CloudWatch helpers in `scripts/`)
 - Do not log credentials or full session tokens; named profiles over implicit env

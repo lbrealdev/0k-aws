@@ -9,9 +9,9 @@ Use the helper script with the instance IDs you are eliminating. It correlates l
 For AWS Backup, the script uses `list-recovery-points-by-resource` against the instance ARN and each discovered volume ARN (not a full vault scan).
 
 ```shell
-./scripts/ec2-inventory.sh -i <INSTANCE_ID> --region <REGION>
-./scripts/ec2-inventory.sh -i <INSTANCE_ID_1>,<INSTANCE_ID_2> --profile <PROFILE> -f json
-./scripts/ec2-inventory.sh -i <INSTANCE_ID_1> -i <INSTANCE_ID_2> -f csv
+./scripts/aws-ec2-inventory.sh -i <INSTANCE_ID> --region <REGION>
+./scripts/aws-ec2-inventory.sh -i <INSTANCE_ID_1>,<INSTANCE_ID_2> --profile <PROFILE> -f json
+./scripts/aws-ec2-inventory.sh -i <INSTANCE_ID_1> -i <INSTANCE_ID_2> -f csv
 ```
 
 The script always writes a report directory (`report/ec2-inventory-<timestamp>/` by default):
@@ -121,7 +121,7 @@ For deeper manual vault inspection, per-recovery-point tag checks, and when a ta
 
 Decide retention before terminate:
 
-1. **Need relaunchable image?** Create an AMI via [`ec2-final-snapshot.sh --mode ami`](../scripts/ec2-final-snapshot.sh) (running instances reboot by default) or the CLI below.
+1. **Need relaunchable image?** Create an AMI via [`aws-ec2-final-snapshot.sh --mode ami`](../scripts/aws-ec2-final-snapshot.sh) (running instances reboot by default) or the CLI below.
 2. **Need volume-level restore only?** Use `--mode volumes` (default) on the same helper, see [manual / final snapshots](./manual-snapshots.md).
 3. **Already covered by AWS Backup / DLM?** Confirm recent successful recovery points before deleting compute.
 
@@ -158,7 +158,7 @@ aws ec2 wait snapshot-completed --snapshot-ids <SNAPSHOT_ID>
 
 - [ ] Inventory instances, volumes, snapshots, AMIs, DLM, AWS Backup
 - [ ] Confirm which volumes have `DeleteOnTermination=true` vs `false`
-- [ ] Create final AMI and/or snapshots if retention is required ([manual snapshots](./manual-snapshots.md) / [`ec2-final-snapshot.sh`](../scripts/ec2-final-snapshot.sh))
+- [ ] Create final AMI and/or snapshots if retention is required ([manual snapshots](./manual-snapshots.md) / [`aws-ec2-final-snapshot.sh`](../scripts/aws-ec2-final-snapshot.sh))
 - [ ] Note Elastic IPs, ENIs, and security groups in use
 - [ ] Check Auto Scaling groups / launch templates / load balancers that reference the instances
 - [ ] Stop applications / drain traffic if needed
@@ -225,7 +225,7 @@ Manual snapshots persist until deleted and incur storage cost. Set a reminder to
 
 - [Why EC2 elimination matters](./elimination-explanation.md): resource map and backup trade-offs
 - [AWS Backup recovery points](./backup-recovery-points.md): recovery-point filter reference
-- [`scripts/ec2-inventory.sh`](../scripts/ec2-inventory.sh): instance-scoped JSON/CSV report (`--instance` required; `-f json|csv`)
+- [`scripts/aws-ec2-inventory.sh`](../scripts/aws-ec2-inventory.sh): instance-scoped JSON/CSV report (`--instance` required; `-f json|csv`)
 
 ## References
 
