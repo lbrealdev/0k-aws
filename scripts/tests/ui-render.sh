@@ -1,5 +1,5 @@
 #!/bin/bash
-# tests/ui-render.sh - presentation probe for the shared status layout.
+# scripts/tests/ui-render.sh - presentation probe for the shared status layout.
 #
 # For each shell script it checks the four documented cases:
 #   1. --help          plain, exit 0, no ANSI
@@ -12,7 +12,7 @@
 
 set -uo pipefail
 
-ROOT="$(cd "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 ESC=$'\e['
 
 TMP="$(mktemp -d)"

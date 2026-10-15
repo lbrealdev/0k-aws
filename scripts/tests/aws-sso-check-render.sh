@@ -18,7 +18,7 @@ Options:
 EOF
 }
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$ROOT/scripts/aws-sso-check.sh"
 PASS=0
 FAIL=0

@@ -52,8 +52,8 @@ There is no CI workflow yet. Before opening a PR that touches scripts:
 - `bash -n path/to/script.sh`
 - `shellcheck path/to/script.sh` when `shellcheck` is on `PATH` (zero findings)
 - `python3 -m py_compile path/to/script.py` for Python helpers
-- For `aws-sso-check.sh` rendering changes: `tests/aws-sso-check-render.sh` (TTY and non-TTY; includes a `0x1a` path/profile)
-- For status/color/stream changes: `tests/ui-render.sh` (every shell script; `--help`, pipe, `NO_COLOR=1`, `--quiet`)
+- For `aws-sso-check.sh` rendering changes: `scripts/tests/aws-sso-check-render.sh` (TTY and non-TTY; includes a `0x1a` path/profile)
+- For status/color/stream changes: `scripts/tests/ui-render.sh` (every shell script; `--help`, pipe, `NO_COLOR=1`, `--quiet`)
 - Scripts whose source is grepped for non-ASCII (token-safe renderers) must stay `LC_ALL=C grep -nP '[^\x00-\x7F]'`-clean
 
 ### Docs
