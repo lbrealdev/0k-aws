@@ -13,7 +13,10 @@ A personal wiki of AWS knowledge: CLI cheat sheets, operational guides, and help
 | [list-resources/](./list-resources/README.md) | Account-wide discovery: AWS Config, Cloud Control API, Steampipe |
 | [dev-tools/](./dev-tools/README.md) | CodeCommit, CodeBuild, CodePipeline, reporting scripts |
 | [scripts/](./scripts/README.md) | Helper scripts, each marked read-only or write |
+| `lib/` | Shared shell status-output helper ([`lib/ui.sh`](./lib/ui.sh); see [AGENTS.md](./AGENTS.md#printing-and-logging)) |
 
 ## Running the scripts
 
 Write scripts are marked **write** in [scripts/README.md](./scripts/README.md) and support `--dry-run` where practical. Run them with `--dry-run` first, and pass an explicit `--profile` / `--region` rather than relying on shell defaults.
+
+Scripts share [`lib/ui.sh`](./lib/ui.sh) for status output: banner, header, and status rows on stderr; pipeable data on stdout; color only on a TTY with `NO_COLOR` unset; `-q` / `--quiet` silences the non-error rows. Each script resolves the helper from its own path, so copy `lib/` alongside a script if you move it (for example into CloudShell).

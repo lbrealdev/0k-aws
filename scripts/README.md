@@ -28,3 +28,4 @@ Convention: prefer **read-only** helpers for inventory/discovery. Write helpers 
 - Requires AWS CLI (and `jq` where noted by each script).
 - Pass `--profile` / `--region` (or configure defaults) as documented in each script’s `--help`.
 - On write scripts, run `--dry-run` before applying changes.
+- Status output follows `lib/ui.sh`: banner/header and status rows go to stderr, pipeable data goes to stdout, `-q` / `--quiet` drops the non-error rows, and color appears only on a TTY with `NO_COLOR` unset. Each script resolves `lib/ui.sh` from its own path, so copy `lib/` alongside the script if you move it (for example into CloudShell).
