@@ -48,6 +48,7 @@ SCRIPTS=(
     "scripts/aws-ec2-final-snapshot.sh|EC2 MANUAL / FINAL SNAPSHOTS|-i i-0123456789abcdef0"
     "scripts/aws-ec2-inventory.sh|ec2-inventory: read-only|-i i-0123456789abcdef0"
     "scripts/aws-iam-find-role.sh|find-iam-role: find an IAM role|dummy --profile p"
+    "scripts/aws-iam-policy-role.sh|aws-iam-policy-role|attach --profile p --role-name r --policy-name n --tag k=v --policy-file /no/such.json --dry-run"
     "scripts/aws-account-list-resources.sh|list-resources: account resources|"
     "scripts/aws-rds-modify-snapshot.sh|RDS SNAPSHOT BATCH MODIFICATION|--source-option a --target-option b"
     "scripts/aws-rds-snapshot-age.sh|rds-snapshot-age: RDS snapshot ages|"
