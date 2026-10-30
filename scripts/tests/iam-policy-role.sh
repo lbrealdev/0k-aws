@@ -2,8 +2,10 @@
 # scripts/tests/iam-policy-role.sh - create-policy document is sent inline.
 #
 # Stubs `aws` so attach never hits the network. Asserts --policy-document is
-# compacted JSON (not a file:// path) and that a pretty-printed file whose
-# raw size is over 6144 is accepted when the compacted form is under the cap.
+# compacted JSON (not a file:// path), MSYS path conversion is disabled on
+# every aws call, --path is passed through unchanged, and a pretty-printed
+# file whose raw size is over 6144 is accepted when compacted form is under
+# the cap.
 
 set -uo pipefail
 
@@ -46,7 +48,12 @@ export AWS_STUB_LOG="$TMP/aws.log"
 
 cat > "$TMP/bin/aws" <<'STUB'
 #!/bin/bash
-jq -nc --args '$ARGS.positional' -- "$@" >> "${AWS_STUB_LOG}"
+jq -nc \
+    --arg no_pathconv "${MSYS_NO_PATHCONV-}" \
+    --arg arg_conv_excl "${MSYS2_ARG_CONV_EXCL-}" \
+    --args \
+    '{args:$ARGS.positional,MSYS_NO_PATHCONV:$no_pathconv,MSYS2_ARG_CONV_EXCL:$arg_conv_excl}' \
+    -- "$@" >> "${AWS_STUB_LOG}"
 
 op=""
 for a in "$@"; do
@@ -92,9 +99,31 @@ bad() { printf 'FAIL: %s\n' "$1"; failed=$((failed + 1)); }
 
 policy_doc_from_log() {
     jq -r '
-        select(index("create-policy") != null)
-        | .[index("--policy-document") + 1] // empty
+        select(.args | index("create-policy") != null)
+        | .args[.args | index("--policy-document") + 1] // empty
     ' "$AWS_STUB_LOG" | tail -n 1
+}
+
+create_policy_path_from_log() {
+    jq -r '
+        select(.args | index("create-policy") != null)
+        | .args[.args | index("--path") + 1] // empty
+    ' "$AWS_STUB_LOG" | tail -n 1
+}
+
+assert_msys_env() {
+    local n badn
+    n=$(jq -s 'length' "$AWS_STUB_LOG")
+    if [[ "$n" -eq 0 ]]; then
+        bad "no aws calls logged"
+        return
+    fi
+    badn=$(jq -s '[.[] | select(.MSYS_NO_PATHCONV != "1" or .MSYS2_ARG_CONV_EXCL != "*")] | length' "$AWS_STUB_LOG")
+    if [[ "$badn" -eq 0 ]]; then
+        ok "MSYS_NO_PATHCONV=1 and MSYS2_ARG_CONV_EXCL=* on all $n aws calls"
+    else
+        bad "MSYS env missing or wrong on $badn of $n aws calls"
+    fi
 }
 
 write_pretty_policy() {
@@ -126,12 +155,14 @@ write_padded_policy() {
 
 run_attach() {
     local file="$1"
+    shift
     ( cd "$TMP" && bash "$SCRIPT" attach \
         --profile stub \
         --role-name agent \
         --policy-name extra \
         --tag toggle=extra \
-        --policy-file "$file" )
+        --policy-file "$file" \
+        "$@" )
 }
 
 printf '== iam policy-role probe ==\n'
@@ -175,6 +206,15 @@ else
     bad "--policy-document does not equal compacted file"
 fi
 
+assert_msys_env
+
+cp_path="$(create_policy_path_from_log)"
+if [[ "$cp_path" == "/" ]]; then
+    ok "create-policy --path is /"
+else
+    bad "create-policy --path is '${cp_path}', expected /"
+fi
+
 # 2) Pretty-printed file: raw size > 6144, compacted size under the cap.
 write_padded_policy "$TMP/padded.json"
 raw_len="$(wc -c < "$TMP/padded.json")"
@@ -209,6 +249,28 @@ if [[ "$pad_doc" == "$pad_compact" && "$pad_doc" != file://* ]]; then
     ok "padded --policy-document is compacted JSON, not file://"
 else
     bad "padded --policy-document mismatch or file:// prefix"
+fi
+
+assert_msys_env
+
+# 3) --path /team/ is passed through unchanged.
+: > "$AWS_STUB_LOG"
+out="$(run_attach policy.json --path /team/ 2>&1)"
+rc=$?
+if [[ "$rc" -eq 0 ]]; then
+    ok "attach --path /team/: exit 0"
+else
+    bad "attach --path /team/: exit $rc"
+    printf '%s\n' "$out"
+fi
+
+assert_msys_env
+
+team_path="$(create_policy_path_from_log)"
+if [[ "$team_path" == "/team/" ]]; then
+    ok "create-policy --path is /team/"
+else
+    bad "create-policy --path is '${team_path}', expected /team/"
 fi
 
 printf '\nPassed: %d  Failed: %d\n' "$passed" "$failed"

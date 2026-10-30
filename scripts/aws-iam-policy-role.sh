@@ -148,7 +148,8 @@ run_aws() {
     err=$(mktemp)
     out=$(mktemp)
     set +e
-    aws --profile "$PROFILE" --region "$REGION" "$@" >"$out" 2>"$err"
+    # Disable Git Bash / MSYS argument path conversion; no-op elsewhere.
+    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' aws --profile "$PROFILE" --region "$REGION" "$@" >"$out" 2>"$err"
     rc=$?
     set -e
     if [[ "$rc" -ne 0 ]]; then
@@ -168,7 +169,8 @@ run_aws_soft() {
     err=$(mktemp)
     out=$(mktemp)
     set +e
-    aws --profile "$PROFILE" --region "$REGION" "$@" >"$out" 2>"$err"
+    # Disable Git Bash / MSYS argument path conversion; no-op elsewhere.
+    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' aws --profile "$PROFILE" --region "$REGION" "$@" >"$out" 2>"$err"
     rc=$?
     set -e
     if [[ "$rc" -ne 0 ]]; then
