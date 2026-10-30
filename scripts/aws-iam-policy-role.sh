@@ -262,14 +262,15 @@ role_is_attached() {
 }
 
 create_policy() {
-    local tags_json cmd=()
+    local tags_json doc cmd=()
     tags_json=$(jq -nc --arg k "$TAG_KEY" --arg v "$TAG_VALUE" \
         '[{Key:$k,Value:$v}]')
+    doc=$(jq -c '.' "$POLICY_FILE")
     cmd=(
         iam create-policy
         --policy-name "$POLICY_NAME"
         --path "$POLICY_PATH"
-        --policy-document "file://${POLICY_FILE}"
+        --policy-document "$doc"
         --tags "$tags_json"
         --output json
     )
@@ -477,7 +478,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 main() {
-    local name_re dir base key_lc bytes
+    local name_re key_lc compact
     name_re='^[A-Za-z0-9+=,.@_-]+$'
 
     if [[ -z "$PROFILE" || -z "$ROLE_NAME" || -z "$POLICY_NAME" || -z "$TAG_RAW" ]]; then
@@ -548,17 +549,14 @@ main() {
             error "policy file not found: $(ui_esc_data "$POLICY_FILE")"
             exit 1
         fi
-        dir=$(cd -- "$(dirname -- "$POLICY_FILE")" && pwd)
-        base=$(basename -- "$POLICY_FILE")
-        POLICY_FILE="${dir}/${base}"
         if ! jq -e 'type == "object" and (.Statement | if type == "array" then length > 0 else type == "object" end)' \
             "$POLICY_FILE" >/dev/null; then
             error "policy file must be a JSON object with Statement"
             exit 1
         fi
-        bytes=$(jq -Rs 'length' "$POLICY_FILE")
-        if [[ "$bytes" -gt 6144 ]]; then
-            error "policy document exceeds 6144 characters"
+        compact=$(jq -c '.' "$POLICY_FILE")
+        if [[ ${#compact} -gt 6144 ]]; then
+            error "compacted policy document exceeds 6144 characters"
             exit 1
         fi
     fi
