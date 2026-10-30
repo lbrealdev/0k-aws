@@ -19,6 +19,7 @@ Convention: prefer **read-only** helpers for inventory/discovery. Write helpers 
 | [`aws-ec2-inventory.sh`](./aws-ec2-inventory.sh) | Read-only | Instance-scoped inventory of volumes, snapshots, AMIs, DLM policies, and AWS Backup recovery points | [EC2 Elimination](../ec2/elimination.md), [Manual snapshots](../ec2/manual-snapshots.md), [ec2/](../ec2/README.md) |
 | [`aws-ec2-sg-audit.sh`](./aws-ec2-sg-audit.sh) | Read-only | Ingress rules open to `0.0.0.0/0` or `::/0`, with a SENSITIVE flag for watched ports | [cli/security-groups.md](../cli/security-groups.md) |
 | [`aws-iam-find-role.sh`](./aws-iam-find-role.sh) | Read-only | Find an IAM role (substring or exact name) across SSO profiles | [cli/iam.md](../cli/iam.md) |
+| [`aws-iam-policy-role.sh`](./aws-iam-policy-role.sh) | **Write** | Create or delete a tagged customer managed policy and attach or detach it from a role (`attach` / `detach`, `--dry-run`) | [cli/iam.md](../cli/iam.md) |
 | [`aws-rds-modify-snapshot.sh`](./aws-rds-modify-snapshot.sh) | **Write** | Batch-modify RDS DB snapshot option groups (supports `--dry-run`) | [RDS Deletion](../rds/deletion.md), [rds/](../rds/README.md) |
 | [`aws-rds-snapshot-age.sh`](./aws-rds-snapshot-age.sh) | Read-only | Instance and cluster snapshots with age in days; flag older than `--min-age` | [RDS Deletion](../rds/deletion.md), [rds/](../rds/README.md) |
 | [`aws-s3-bucket-object.sh`](./aws-s3-bucket-object.sh) | Read-only | List S3 buckets and object counts | [cli/s3.md](../cli/s3.md) |
