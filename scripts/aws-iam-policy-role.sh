@@ -143,6 +143,11 @@ check_dependencies() {
     fi
 }
 
+# JSON-encode via stdin so MSYS cannot rewrite a /-prefixed value.
+jq_str() {
+    printf '%s' "$1" | jq -Rs .
+}
+
 run_aws() {
     local err out rc
     err=$(mktemp)
@@ -225,7 +230,7 @@ require_tag_match() {
     local ok
     run_aws iam list-policy-tags --policy-arn "$POLICY_ARN" --output json
     refuse_truncated
-    ok=$(jq -r --arg k "$TAG_KEY" --arg v "$TAG_VALUE" \
+    ok=$(jq -r --argjson k "$(jq_str "$TAG_KEY")" --argjson v "$(jq_str "$TAG_VALUE")" \
         '.Tags // [] | any(.Key == $k and .Value == $v)' <<<"$AWS_BODY")
     if [[ "$ok" != "true" ]]; then
         error "policy tag does not match; refusing to touch it"
@@ -244,7 +249,7 @@ require_same_document() {
         --policy-arn "$POLICY_ARN" \
         --version-id "$ver" \
         --output json
-    local_norm=$(jq -c -S '.' "$POLICY_FILE")
+    local_norm=$(jq -c -S '.' < "$POLICY_FILE")
     remote_norm=$(jq -c -S '.PolicyVersion.Document' <<<"$AWS_BODY")
     if [[ "$local_norm" != "$remote_norm" ]]; then
         error "policy already exists and the document differs; detach it first"
@@ -263,17 +268,17 @@ role_is_attached() {
 
 create_policy() {
     local tags_json doc input
-    tags_json=$(jq -nc --arg k "$TAG_KEY" --arg v "$TAG_VALUE" \
+    tags_json=$(jq -nc --argjson k "$(jq_str "$TAG_KEY")" --argjson v "$(jq_str "$TAG_VALUE")" \
         '[{Key:$k,Value:$v}]')
-    doc=$(jq -c '.' "$POLICY_FILE")
+    doc=$(jq -c '.' < "$POLICY_FILE")
     input=$(jq -nc \
         --arg name "$POLICY_NAME" \
-        --arg path "$POLICY_PATH" \
+        --argjson path "$(jq_str "$POLICY_PATH")" \
         --arg doc "$doc" \
         --argjson tags "$tags_json" \
         '{PolicyName:$name,Path:$path,PolicyDocument:$doc,Tags:$tags}')
     if [[ -n "$DESCRIPTION" ]]; then
-        input=$(jq -c --arg d "$DESCRIPTION" '. + {Description:$d}' <<<"$input")
+        input=$(jq -c --argjson d "$(jq_str "$DESCRIPTION")" '. + {Description:$d}' <<<"$input")
     fi
     run_aws iam create-policy --cli-input-json "$input" --output json
     POLICY_ARN=$(jq -r '.Policy.Arn // empty' <<<"$AWS_BODY")
@@ -548,11 +553,11 @@ main() {
             exit 1
         fi
         if ! jq -e 'type == "object" and (.Statement | if type == "array" then length > 0 else type == "object" end)' \
-            "$POLICY_FILE" >/dev/null; then
+            < "$POLICY_FILE" >/dev/null; then
             error "policy file must be a JSON object with Statement"
             exit 1
         fi
-        compact=$(jq -c '.' "$POLICY_FILE")
+        compact=$(jq -c '.' < "$POLICY_FILE")
         if [[ ${#compact} -gt 6144 ]]; then
             error "compacted policy document exceeds 6144 characters"
             exit 1

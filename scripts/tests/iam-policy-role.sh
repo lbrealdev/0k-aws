@@ -1,11 +1,11 @@
 #!/bin/bash
 # scripts/tests/iam-policy-role.sh - create-policy is sent as --cli-input-json.
 #
-# Stubs `aws` so attach never hits the network. Asserts create-policy input
-# JSON (Path, PolicyDocument, Tags), that no aws argument starts with / or
-# file://, that MSYS path-conversion env is unset, and that a pretty-printed
-# file whose raw size is over 6144 is accepted when compacted form is under
-# the cap.
+# Stubs `aws` so attach never hits the network. A jq shim logs argv then
+# execs real jq. Asserts create-policy input JSON (Path, PolicyDocument,
+# Tags), that no aws or jq argument starts with / or file://, that MSYS
+# path-conversion env is unset, and that a pretty-printed file whose raw
+# size is over 6144 is accepted when compacted form is under the cap.
 
 set -uo pipefail
 
@@ -42,13 +42,29 @@ TMP="$(mktemp -d)"
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
+REAL_JQ=$(command -v jq)
+if [[ -z "$REAL_JQ" ]]; then
+    printf 'jq is required\n' >&2
+    exit 1
+fi
+export REAL_JQ
+
 mkdir -p "$TMP/bin"
 export AWS_STUB_LOG="$TMP/aws.log"
+export JQ_STUB_LOG="$TMP/jq.log"
 : > "$AWS_STUB_LOG"
+: > "$JQ_STUB_LOG"
+
+cat > "$TMP/bin/jq" <<'STUB'
+#!/bin/bash
+"$REAL_JQ" -nc --args '$ARGS.positional' -- "$@" >> "${JQ_STUB_LOG}"
+exec "$REAL_JQ" "$@"
+STUB
+chmod +x "$TMP/bin/jq"
 
 cat > "$TMP/bin/aws" <<'STUB'
 #!/bin/bash
-jq -nc \
+"$REAL_JQ" -nc \
     --arg no_pathconv "${MSYS_NO_PATHCONV-}" \
     --arg arg_conv_excl "${MSYS2_ARG_CONV_EXCL-}" \
     --args \
@@ -99,7 +115,7 @@ ok()  { printf 'PASS: %s\n' "$1"; passed=$((passed + 1)); }
 bad() { printf 'FAIL: %s\n' "$1"; failed=$((failed + 1)); }
 
 cli_input_from_log() {
-    jq -r '
+    "$REAL_JQ" -r '
         select(.args | index("create-policy") != null)
         | .args[.args | index("--cli-input-json") + 1] // empty
     ' "$AWS_STUB_LOG" | tail -n 1
@@ -115,7 +131,8 @@ assert_create_policy_input() {
         return
     fi
     ok "create-policy --cli-input-json was logged"
-    if printf '%s' "$input" | jq -e \
+    # shellcheck disable=SC2016
+    if printf '%s' "$input" | "$REAL_JQ" -e \
         --arg p "$expected_path" \
         --arg doc "$compact" \
         '.Path == $p
@@ -130,24 +147,31 @@ assert_create_policy_input() {
 }
 
 assert_no_slash_or_file_args() {
-    local hits
-    hits=$(jq -s '[.[] | .args[] | select(startswith("/") or startswith("file://"))] | length' "$AWS_STUB_LOG")
-    if [[ "$hits" -eq 0 ]]; then
+    local aws_hits jq_hits
+    aws_hits=$("$REAL_JQ" -s '[.[] | .args[] | select(startswith("/") or startswith("file://"))] | length' "$AWS_STUB_LOG")
+    jq_hits=$("$REAL_JQ" -s '[.[] | .[] | select(startswith("/") or startswith("file://"))] | length' "$JQ_STUB_LOG")
+    if [[ "$aws_hits" -eq 0 ]]; then
         ok "no aws argument starts with / or file://"
     else
         bad "aws arguments starting with / or file://"
-        jq -s '[.[] | .args[] | select(startswith("/") or startswith("file://"))]' "$AWS_STUB_LOG"
+        "$REAL_JQ" -s '[.[] | .args[] | select(startswith("/") or startswith("file://"))]' "$AWS_STUB_LOG"
+    fi
+    if [[ "$jq_hits" -eq 0 ]]; then
+        ok "no jq argument starts with / or file://"
+    else
+        bad "jq arguments starting with / or file://"
+        "$REAL_JQ" -s '[.[] | .[] | select(startswith("/") or startswith("file://"))]' "$JQ_STUB_LOG"
     fi
 }
 
 assert_msys_env_unset() {
     local n setn
-    n=$(jq -s 'length' "$AWS_STUB_LOG")
+    n=$("$REAL_JQ" -s 'length' "$AWS_STUB_LOG")
     if [[ "$n" -eq 0 ]]; then
         bad "no aws calls logged"
         return
     fi
-    setn=$(jq -s '[.[] | select(.MSYS_NO_PATHCONV != "" or .MSYS2_ARG_CONV_EXCL != "")] | length' "$AWS_STUB_LOG")
+    setn=$("$REAL_JQ" -s '[.[] | select(.MSYS_NO_PATHCONV != "" or .MSYS2_ARG_CONV_EXCL != "")] | length' "$AWS_STUB_LOG")
     if [[ "$setn" -eq 0 ]]; then
         ok "MSYS_NO_PATHCONV and MSYS2_ARG_CONV_EXCL unset on all $n aws calls"
     else
@@ -199,6 +223,7 @@ printf '== iam policy-role probe ==\n'
 # 1) Pretty-printed file: create-policy input is JSON, not file:// or --path.
 write_pretty_policy "$TMP/policy.json"
 : > "$AWS_STUB_LOG"
+: > "$JQ_STUB_LOG"
 out="$(run_attach policy.json 2>&1)"
 rc=$?
 if [[ "$rc" -eq 0 ]]; then
@@ -208,7 +233,7 @@ else
     printf '%s\n' "$out"
 fi
 
-compact="$(jq -c '.' "$TMP/policy.json")"
+compact="$("$REAL_JQ" -c '.' < "$TMP/policy.json")"
 assert_create_policy_input "/" "$compact"
 assert_no_slash_or_file_args
 assert_msys_env_unset
@@ -216,7 +241,7 @@ assert_msys_env_unset
 # 2) Pretty-printed file: raw size > 6144, compacted size under the cap.
 write_padded_policy "$TMP/padded.json"
 raw_len="$(wc -c < "$TMP/padded.json")"
-pad_compact="$(jq -c '.' "$TMP/padded.json")"
+pad_compact="$("$REAL_JQ" -c '.' < "$TMP/padded.json")"
 compact_len="${#pad_compact}"
 
 if [[ "$raw_len" -gt 6144 && "$compact_len" -lt 6144 ]]; then
@@ -226,6 +251,7 @@ else
 fi
 
 : > "$AWS_STUB_LOG"
+: > "$JQ_STUB_LOG"
 out="$(run_attach padded.json 2>&1)"
 rc=$?
 if [[ "$rc" -eq 0 ]]; then
@@ -245,8 +271,9 @@ assert_create_policy_input "/" "$pad_compact"
 assert_no_slash_or_file_args
 assert_msys_env_unset
 
-# 3) --path /team/ is inside --cli-input-json, not a bare aws argument.
+# 3) --path /team/ is inside --cli-input-json, not a bare aws/jq argument.
 : > "$AWS_STUB_LOG"
+: > "$JQ_STUB_LOG"
 out="$(run_attach policy.json --path /team/ 2>&1)"
 rc=$?
 if [[ "$rc" -eq 0 ]]; then
