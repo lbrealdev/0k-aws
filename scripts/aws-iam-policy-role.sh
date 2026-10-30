@@ -148,8 +148,7 @@ run_aws() {
     err=$(mktemp)
     out=$(mktemp)
     set +e
-    # Disable Git Bash / MSYS argument path conversion; no-op elsewhere.
-    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' aws --profile "$PROFILE" --region "$REGION" "$@" >"$out" 2>"$err"
+    aws --profile "$PROFILE" --region "$REGION" "$@" >"$out" 2>"$err"
     rc=$?
     set -e
     if [[ "$rc" -ne 0 ]]; then
@@ -169,8 +168,7 @@ run_aws_soft() {
     err=$(mktemp)
     out=$(mktemp)
     set +e
-    # Disable Git Bash / MSYS argument path conversion; no-op elsewhere.
-    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' aws --profile "$PROFILE" --region "$REGION" "$@" >"$out" 2>"$err"
+    aws --profile "$PROFILE" --region "$REGION" "$@" >"$out" 2>"$err"
     rc=$?
     set -e
     if [[ "$rc" -ne 0 ]]; then
@@ -264,22 +262,20 @@ role_is_attached() {
 }
 
 create_policy() {
-    local tags_json doc cmd=()
+    local tags_json doc input
     tags_json=$(jq -nc --arg k "$TAG_KEY" --arg v "$TAG_VALUE" \
         '[{Key:$k,Value:$v}]')
     doc=$(jq -c '.' "$POLICY_FILE")
-    cmd=(
-        iam create-policy
-        --policy-name "$POLICY_NAME"
-        --path "$POLICY_PATH"
-        --policy-document "$doc"
-        --tags "$tags_json"
-        --output json
-    )
+    input=$(jq -nc \
+        --arg name "$POLICY_NAME" \
+        --arg path "$POLICY_PATH" \
+        --arg doc "$doc" \
+        --argjson tags "$tags_json" \
+        '{PolicyName:$name,Path:$path,PolicyDocument:$doc,Tags:$tags}')
     if [[ -n "$DESCRIPTION" ]]; then
-        cmd+=(--description "$DESCRIPTION")
+        input=$(jq -c --arg d "$DESCRIPTION" '. + {Description:$d}' <<<"$input")
     fi
-    run_aws "${cmd[@]}"
+    run_aws iam create-policy --cli-input-json "$input" --output json
     POLICY_ARN=$(jq -r '.Policy.Arn // empty' <<<"$AWS_BODY")
     if [[ -z "$POLICY_ARN" || "$POLICY_ARN" == "null" ]]; then
         error "create-policy did not return an ARN"
